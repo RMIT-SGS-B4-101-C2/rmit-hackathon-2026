@@ -31,8 +31,6 @@ npm.cmd run typecheck
 npm.cmd run build
 npm.cmd run test:security
 npm.cmd run tide:doctor -- --check --url http://localhost:3000
-npm.cmd run test:callback
-node scripts/check-tide-setup.mjs
 ```
 
 Security tests launch a separate server on port 3101 with an ephemeral fixture issuer passed only to that child process. They use the same JWT, role, DPoP, API, and PostgreSQL code as the app. They do not change `.env` or the real adapter, and do not add a test login or auth bypass to application code. Generated test signing keys remain in the test process environment. Do not point this suite at a production database.
@@ -46,17 +44,7 @@ The four test groups cover:
 
 Tests use opaque ciphertext fixtures; they **do not prove live Tide encryption or identity isolation in the Fabric**. They create then delete their own records in the local development database; corresponding activity events remain. Run builds and tests sequentially because the production build owns `.next`, including the test build subdirectory.
 
-With the main app running on port 3000, `test:callback` uses a separate Chrome session and a synthetic token-endpoint failure to verify a single provider-owned exchange and a visible retry screen. It supplies no credentials or valid tokens. `check-tide-setup.mjs` reads the local realm configuration and reports booleans/counts without printing credentials. Neither replaces live acceptance.
-
 ## Real Tide acceptance check
-
-### Browser-extension hydration warning
-
-If the development overlay points to `<body>` and lists `data-new-gr-c-s-check-loaded` and `data-gr-ext-installed`, Grammarly has modified the DOM before React hydrated it. A clean Chrome session was checked on `/auth/redirect` with zero hydration warnings or uncaught errors; injecting those two attributes before hydration reproduced the warning. Disable Grammarly for localhost (or test in a browser profile with extensions disabled), then reload the page. If using Incognito, ensure Grammarly is not allowed there.
-
-Next.js documents [browser extensions modifying HTML](https://nextjs.org/docs/messages/react-hydration-error) as a hydration-error cause. This warning is separate from the Tide session-signing failure described in [the login diagnostics](TIDE_LOGIN_DIAGNOSTICS.md); removing it does not establish a Tide session.
-
-### Acceptance steps
 
 Use two distinct Tide identities, A and B, in separate browser profiles. A second app principal may need an invite and approval through Tide's realm console because open registration is disabled. Do not reuse identity A for both profiles.
 
@@ -71,7 +59,5 @@ Use two distinct Tide identities, A and B, in separate browser profiles. A secon
 Record the actual results, SDK/image version, and any failure without substituting fixture tests for these steps. No live encryption success is claimed until the owner has completed these checks.
 
 ## Runtime state at implementation
-
-**Live login is currently blocked.** The callback now waits for the front-channel provider instead of invoking the hybrid-mode callback helper. Failed exchanges remain on the callback with an explicit error and retry button. Production build, TypeScript, and the callback regression passed after this change. Real attempts still fail in TideCloak's `TidecloakSessionStartTokenSign:1` signing operation. See [sanitized login diagnostics](TIDE_LOGIN_DIAGNOSTICS.md) for evidence and the next investigation step. Stage 1 acceptance is incomplete.
 
 The initial PostgreSQL migration was applied and the four API security test groups passed. Owner enrollment, adapter export, and realm bootstrap are complete. Tide Doctor passes all 18 checks, with no pending governance changes. The generated logo/background were uploaded, signed, and verified to match the served bytes. Profile collection is disabled for this stage, and a read-only realm diagnostic confirms no post-signup form will fire. Desktop/mobile home rendering and the unauthenticated vault gate were checked without uncaught browser errors. Live encrypted save/open and the second-identity Fabric check remain pending; fixture tests do not substitute for them. The image pulled for this setup was `tideorg/tidecloak-dev:latest` at digest `sha256:3f52d0bc3e4e3ae5153e172960003bbe94705cd40af6561fd4c7c4434aaa2708`.
