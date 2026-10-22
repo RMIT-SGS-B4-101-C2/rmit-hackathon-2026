@@ -1,0 +1,60 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ConsentStatus {
+  PENDING_POLICY
+  ACTIVE
+  WITHDRAWN
+}
+
+model Study {
+  id            String         @id @default(uuid()) @db.Uuid
+  title         String
+  description   String
+  createdAt     DateTime       @default(now())
+  contributions Contribution[]
+}
+
+model Contribution {
+  id                 String         @id @default(uuid()) @db.Uuid
+  participantSubject String
+  studyId            String         @db.Uuid
+  ciphertext         String         @db.Text
+  encryptionTag      String
+  createdAt          DateTime       @default(now())
+  study              Study          @relation(fields: [studyId], references: [id])
+  grants             ConsentGrant[]
+
+  @@index([participantSubject, studyId])
+}
+
+model ConsentGrant {
+  id                String        @id @default(uuid()) @db.Uuid
+  contributionId    String        @db.Uuid
+  researcherSubject String
+  purpose           String
+  status            ConsentStatus @default(PENDING_POLICY)
+  expiresAt         DateTime
+  withdrawnAt       DateTime?
+  signedPolicy      String?       @db.Text
+  createdAt         DateTime      @default(now())
+  contribution      Contribution  @relation(fields: [contributionId], references: [id])
+
+  @@index([contributionId, researcherSubject, status])
+}
+
+// Application event history; not a tamper-proof ledger or proof of plaintext viewing.
+model AuditEvent {
+  id         String   @id @default(uuid()) @db.Uuid
+  actor      String
+  action     String
+  resourceId String
+  createdAt  DateTime @default(now())
+
+  @@index([resourceId, createdAt])
+}
