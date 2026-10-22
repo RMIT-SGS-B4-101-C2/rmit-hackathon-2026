@@ -1,7 +1,7 @@
 import { Models } from "@tideorg/js";
 import { withClientRole } from "@/lib/auth/middleware";
 import { loadTideConfig } from "@/lib/auth/tidecloakConfig";
-import { signedPolicySchema } from "@/lib/survey";
+import { recordIdSchema, signedPolicySchema } from "@/lib/survey";
 import { attachConsentPolicies, getConsentPolicyContext, listPolicyQueue } from "@/lib/vault-store";
 
 export const runtime = "nodejs";
@@ -46,6 +46,12 @@ export const GET = withClientRole("realm-management", "tide-realm-admin", async 
 export const POST = withClientRole("realm-management", "tide-realm-admin", async (req, jwt) => {
   try {
     const body = await req.json();
+    if (jwt.demo_mode === true) {
+      const grantId = body && typeof body === "object" && "grantId" in body && typeof body.grantId === "string" ? body.grantId : "";
+      if (!recordIdSchema.safeParse(grantId).success) return json({ error: "Choose a valid consent request." }, 400);
+      const attached = await attachConsentPolicies(jwt.sub!, grantId, "SIMULATED_TIDECLOAK_POLICY:read:_tide_decryptor", "SIMULATED_TIDECLOAK_POLICY:write:_tide_encryptor", true);
+      return attached ? json({ attached: true, simulated: true }) : json({ error: "This consent request is not waiting for policy approval." }, 409);
+    }
     const parsed = signedPolicySchema.safeParse(body);
     if (!parsed.success) return json({ error: "Both signed policies are required." }, 400);
     const grant = await getConsentPolicyContext(parsed.data.grantId);

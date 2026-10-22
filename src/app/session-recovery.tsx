@@ -2,11 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
-import { useTideCloak } from "@tidecloak/nextjs";
 import { consumeSessionRecovery, forgetSession, rememberSession } from "@/lib/session-recovery";
+import { useAppAuth } from "@/lib/auth/use-app-auth";
 
 export function SessionRecovery({ children }: { children: React.ReactNode }) {
-  const { authenticated, isInitializing, login } = useTideCloak();
+  const { authenticated, isInitializing, login } = useAppAuth();
   const pathname = usePathname();
   const checked = useRef(false);
   const wasAuthenticated = useRef(false);

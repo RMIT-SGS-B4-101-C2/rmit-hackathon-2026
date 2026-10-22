@@ -48,20 +48,20 @@ export async function listConsentActivity(subject: string) {
     }),
     db.consentGrant.findMany({
       where: { researcherSubject: subject },
-      select: { id: true, contributionId: true, purpose: true, status: true, expiresAt: true, withdrawnAt: true, createdAt: true },
+      select: { id: true, contributionId: true, purpose: true, status: true, expiresAt: true, withdrawnAt: true, createdAt: true, signedPolicy: true, ownerWritePolicy: true },
       orderBy: { createdAt: "desc" }, take: 100,
     }),
   ]);
   const now = new Date();
   return {
     asOwner: asOwner.map(({ signedPolicy, ownerWritePolicy, ...grant }) => ({ ...grant, status: grant.expiresAt <= now && ["REQUESTED", "PENDING_POLICY", "ACTIVE"].includes(grant.status) ? "EXPIRED" : grant.status, policiesReady: Boolean(signedPolicy && ownerWritePolicy) })),
-    asResearcher: asResearcher.map((grant) => ({ ...grant, status: grant.expiresAt <= now && ["REQUESTED", "PENDING_POLICY", "ACTIVE"].includes(grant.status) ? "EXPIRED" : grant.status })),
+    asResearcher: asResearcher.map(({ signedPolicy, ownerWritePolicy, ...grant }) => ({ ...grant, status: grant.expiresAt <= now && ["REQUESTED", "PENDING_POLICY", "ACTIVE"].includes(grant.status) ? "EXPIRED" : grant.status, policiesReady: Boolean(signedPolicy && ownerWritePolicy) })),
   };
 }
 
 export async function listPolicyQueue() {
   return getDb().consentGrant.findMany({
-    where: { status: "PENDING_POLICY", expiresAt: { gt: new Date() } },
+    where: { status: "PENDING_POLICY", expiresAt: { gt: new Date() }, OR: [{ signedPolicy: null }, { ownerWritePolicy: null }] },
     select: { id: true, contributionId: true, researcherTideKey: true, purpose: true, expiresAt: true, contribution: { select: { participantTideKey: true } } },
     orderBy: { createdAt: "asc" }, take: 100,
   });
@@ -78,7 +78,8 @@ export async function listStudyDirectory() {
 export async function requestConsent(researcherSubject: string, researcherTideKey: string, contributionId: string, purpose: string) {
   return getDb().$transaction(async (db) => {
     const contribution = await db.contribution.findFirst({ where: { id: contributionId, studyId: STUDY.id }, select: { participantSubject: true } });
-    if (!contribution || contribution.participantSubject === researcherSubject) return null;
+    if (!contribution) return null;
+    if (contribution.participantSubject === researcherSubject) return { self: true as const };
     const pending = await db.consentGrant.findFirst({
       where: { contributionId, researcherSubject, status: { in: ["REQUESTED", "PENDING_POLICY", "ACTIVE"] }, expiresAt: { gt: new Date() } },
       select: { id: true },
@@ -117,12 +118,12 @@ export async function decideConsent(ownerSubject: string, grantId: string, decis
   });
 }
 
-export async function attachConsentPolicies(adminSubject: string, grantId: string, signedPolicy: string, ownerWritePolicy: string) {
+export async function attachConsentPolicies(adminSubject: string, grantId: string, signedPolicy: string, ownerWritePolicy: string, simulated = false) {
   return getDb().$transaction(async (db) => {
     const grant = await db.consentGrant.findFirst({ where: { id: grantId }, select: { id: true, contributionId: true, researcherSubject: true, researcherTideKey: true, status: true, expiresAt: true } });
     if (!grant || grant.status !== "PENDING_POLICY" || grant.expiresAt <= new Date()) return null;
     await db.consentGrant.update({ where: { id: grant.id }, data: { signedPolicy, ownerWritePolicy } });
-    await db.auditEvent.create({ data: { actor: adminSubject, action: "TIDE_POLICIES_ATTACHED", resourceId: grant.contributionId, details: { grantId: grant.id, researcherSubject: grant.researcherSubject, expiresAt: grant.expiresAt.toISOString() } } });
+    await db.auditEvent.create({ data: { actor: adminSubject, action: simulated ? "SIMULATED_POLICY_GATE_APPROVED" : "TIDE_POLICIES_ATTACHED", resourceId: grant.contributionId, details: { grantId: grant.id, researcherSubject: grant.researcherSubject, expiresAt: grant.expiresAt.toISOString() } } });
     return { id: grant.id, contributionId: grant.contributionId };
   });
 }

@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { useTideCloak } from "@tidecloak/nextjs";
 import { Check, Clock3, History, ShieldCheck, X } from "lucide-react";
+import { useAppAuth } from "@/lib/auth/use-app-auth";
+import { decodeSimulatedPayload, encodeSimulatedPayload } from "@/lib/demo-payload";
 
 type Activity = {
   id: string; contributionId: string; purpose: string; status: string; expiresAt: string; createdAt: string;
@@ -14,7 +15,7 @@ const absolute = (path: string) => new URL(path, window.location.origin).href;
 const fromBase64 = (value: string) => Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
 
 export function ConsentPanel() {
-  const { secureFetch, doDecrypt, doEncrypt } = useTideCloak();
+  const { secureFetch, doDecrypt, doEncrypt, isDemo } = useAppAuth();
   const [ownerRequests, setOwnerRequests] = useState<Activity[]>([]);
   const [researcherRequests, setResearcherRequests] = useState<Activity[]>([]);
   const [history, setHistory] = useState<Event[]>([]);
@@ -38,27 +39,32 @@ export function ConsentPanel() {
       const response = await secureFetch(absolute(`/api/consent?grantId=${grantId}`), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Unable to update consent.");
-      setStatus(decision === "approve" ? "Consent recorded. Tide policy signing is still required before a share can be prepared." : decision === "deny" ? "The request was denied." : "Future API access has been revoked. Previously copied plaintext cannot be recalled.");
+      setStatus(decision === "approve" ? (isDemo ? "Simulated consent recorded. A separate simulated admin policy gate remains." : "Consent recorded. Tide policy signing is still required before a share can be prepared.") : decision === "deny" ? "The request was denied." : "Future API access has been revoked. Previously copied plaintext cannot be recalled.");
       await refresh();
     } catch (err) { setError(err instanceof Error ? err.message : "Unable to update consent."); }
     finally { setBusyId(""); }
   }
 
   async function prepareShare(grantId: string) {
-    setBusyId(grantId); setError(""); setStatus("Opening the original in Tide, then encrypting a separate record-scoped copy…");
+    setBusyId(grantId); setError(""); setStatus(isDemo ? "Checking simulated consent and roles, then preparing a fictional fixture share…" : "Opening the original in Tide, then encrypting a separate record-scoped copy…");
     try {
       const response = await secureFetch(absolute(`/api/consent?grantId=${grantId}&shareMaterials=1`), { cache: "no-store" });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "The signed policy is not ready.");
       const { materials } = body;
-      const plaintextResult = await doDecrypt([{ encrypted: materials.contribution.ciphertext, tags: [materials.contribution.encryptionTag] }]);
-      const plaintext = typeof plaintextResult?.[0] === "string" ? plaintextResult[0] : new TextDecoder().decode(plaintextResult[0]);
-      const encryptedResult = await doEncrypt([{ data: plaintext, tags: [materials.contributionId] }], fromBase64(materials.ownerWritePolicy));
-      if (typeof encryptedResult?.[0] !== "string") throw new Error("Tide did not return the shared ciphertext.");
-      const saveResponse = await secureFetch(absolute(`/api/consent?grantId=${grantId}`), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ciphertext: encryptedResult[0] }) });
+      let ciphertext: string;
+      if (isDemo) ciphertext = encodeSimulatedPayload(decodeSimulatedPayload(materials.contribution.ciphertext));
+      else {
+        const plaintextResult = await doDecrypt([{ encrypted: materials.contribution.ciphertext, tags: [materials.contribution.encryptionTag] }]);
+        const plaintext = typeof plaintextResult?.[0] === "string" ? plaintextResult[0] : new TextDecoder().decode(plaintextResult[0]);
+        const encryptedResult = await doEncrypt([{ data: plaintext, tags: [materials.contributionId] }], fromBase64(materials.ownerWritePolicy));
+        if (typeof encryptedResult?.[0] !== "string") throw new Error("Tide did not return the shared ciphertext.");
+        ciphertext = encryptedResult[0];
+      }
+      const saveResponse = await secureFetch(absolute(`/api/consent?grantId=${grantId}`), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ciphertext }) });
       const saved = await saveResponse.json();
       if (!saveResponse.ok) throw new Error(saved.error || "Could not save the encrypted share.");
-      setStatus("A separate ciphertext is ready for the approved researcher. Your private original remains unchanged.");
+      setStatus(isDemo ? "Simulated share is ready for the named researcher. The fictional fixture remains readable and was not encrypted." : "A separate ciphertext is ready for the approved researcher. Your private original remains unchanged.");
       await refresh();
     } catch (err) {
       setStatus(""); setError(err instanceof Error ? err.message : "Could not prepare this encrypted share. Check that Tide encryptor/decryptor roles are active, then try again.");
@@ -74,8 +80,8 @@ export function ConsentPanel() {
       <h3>Record {request.contributionId.slice(0, 8)}</h3><p>{request.purpose}</p>
       <p className="quiet">Researcher {request.researcherSubject?.slice(0, 12)}… · requested {request.createdAt.slice(0, 10)}</p>
       {request.status === "REQUESTED" && <div className="inline-actions"><button className="button primary small" disabled={!!busyId} onClick={() => void decide(request.id, "approve")}><Check size={14} /> Approve</button><button className="button danger small" disabled={!!busyId} onClick={() => void decide(request.id, "deny")}><X size={14} /> Deny</button></div>}
-      {request.status === "PENDING_POLICY" && (request.policiesReady ? <><p className="quiet">Tide policies approved. Prepare a separate researcher-readable copy with your Tide account.</p><button className="button primary small" disabled={!!busyId} onClick={() => void prepareShare(request.id)}><ShieldCheck size={14} /> Prepare encrypted share</button></> : <><p className="quiet">Your consent is recorded. A Tide realm administrator must sign the record-scoped policies before any copy can be shared.</p><Link className="text-link" href="/admin/policies">Open Tide policy desk →</Link></>)}
-      {request.status === "ACTIVE" && <><p className="quiet">Encrypted copy is available to this researcher while consent remains active.</p><button className="button secondary small" disabled={!!busyId} onClick={() => void decide(request.id, "withdraw")}>Withdraw future access</button></>}
+      {request.status === "PENDING_POLICY" && (request.policiesReady ? <><p className="quiet">{isDemo ? "Simulated policy gate approved. Prepare a fictional fixture copy." : "Tide policies approved. Prepare a separate researcher-readable copy with your Tide account."}</p><button className="button primary small" disabled={!!busyId} onClick={() => void prepareShare(request.id)}><ShieldCheck size={14} /> {isDemo ? "Prepare simulated share" : "Prepare encrypted share"}</button></> : <><p className="quiet">Your consent is recorded. {isDemo ? "A separate simulated realm-admin approval is required before sharing." : "A Tide realm administrator must sign the record-scoped policies before any copy can be shared."}</p><Link className="text-link" href="/admin/policies">{isDemo ? "Open simulated policy desk →" : "Open Tide policy desk →"}</Link></>)}
+      {request.status === "ACTIVE" && <><p className="quiet">{isDemo ? "Simulated copy is available to this researcher while consent remains active." : "Encrypted copy is available to this researcher while consent remains active."}</p><button className="button secondary small" disabled={!!busyId} onClick={() => void decide(request.id, "withdraw")}>Withdraw future access</button></>}
     </article>)}
     {researcherRequests.length > 0 && <div className="subsection"><h3>My requests as a researcher</h3>{researcherRequests.map((request) => <p key={request.id}><span className={`badge state-${request.status.toLowerCase()}`}>{request.status.replaceAll("_", " ")}</span> · Record {request.contributionId.slice(0, 8)} · {request.purpose}</p>)}</div>}
     <details className="history-panel"><summary><History size={15} /> Activity history ({history.length})</summary>{history.map((event) => <div className="history-row" key={event.id}><span>{event.action.replaceAll("_", " ")}</span><span>Record {event.resourceId.slice(0, 8)}</span><time>{event.createdAt.slice(0, 16).replace("T", " ")} UTC</time></div>)}</details>

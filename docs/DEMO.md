@@ -2,6 +2,27 @@
 
 This runbook covers the participant, researcher, and realm-admin screens. Use fictional survey entries only.
 
+For a timed recording, follow the [two-minute MVP video script](VIDEO_SCRIPT.md).
+
+## Local simulated TideCloak walkthrough
+
+Use this when Tide account enrollment, ORK availability, or live policy signing prevents a full demo. Enable `DEMO_AUTH_ENABLED=true` and a private `DEMO_AUTH_SECRET` in ignored `.env`, then restart `npm.cmd run dev`. The simulator is disabled in production and issues a signed, four-hour, HttpOnly development cookie. Use the buttons on `/` to switch between personas in the same browser.
+
+The persona roles follow Tide's model for this app: participant has `appUser`, `_tide_enabled`, `_tide_encryptor`, and `_tide_decryptor`; researcher has `appUser`, `_tide_enabled`, and `_tide_decryptor`; realm admin has the `tide-realm-admin` client role on `realm-management`. The API checks those claims server-side. It also enforces record ownership, disallows self-consent, checks active consent for delivery, and blocks delivery after withdrawal. The policy desk's simulated approval requires the admin client role.
+
+1. Choose **Participant**, open `/vault`, fill a synthetic example, and save it.
+2. Sign out from `/`, choose **Researcher**, open `/research`, enter the record ID and a purpose, and request consent. A researcher cannot open it yet.
+3. Sign out, choose **Participant**, approve the named request.
+4. Sign out, choose **Realm admin**, open `/admin/policies`, and approve the simulated policy gate.
+5. Return as **Participant**, open `/vault`, and prepare the simulated share.
+6. Return as **Researcher**, open `/research`, and open the active record. Withdraw access as the participant and confirm the next researcher fetch is denied.
+
+Every page displays a simulated TideCloak banner. The app-level login, role, consent, and record checks are exercised; no Tide token, DPoP proof, ORK operation, encryption, or signed policy is involved. Demo survey payloads are reversibly base64 encoded. This is not a privacy or cryptography demonstration; use fictional data only.
+
+## Where TideCloak protects the real app
+
+Tide's MCP scenario selection mapped the app to `relationship-attestation`: Tide JWT and DPoP identify and bind each API caller, while signed `RelationshipAttestation:1` policies scope each cryptographic operation to a named Tide user and one contribution. The app's participant consent record remains an independent gate. `_tide_encryptor` and `_tide_decryptor` are realm roles and are necessary but not sufficient; the matching user policy and active participant consent are also required. `tide-realm-admin` is a client role on `realm-management` and authorizes policy approval. The local simulator mirrors the identity/role/consent decision points only; the live Tide SDK and network perform cryptographic enforcement.
+
 ## Before the demo
 
 1. Start the existing TideCloak container and PostgreSQL, then apply the consent workflow migration:

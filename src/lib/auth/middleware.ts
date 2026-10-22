@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { verifyTideJWT, extractToken } from "./tideJWT";
 import { verifyDpop } from "./verifyDpop";
+import { readDemoSession } from "./demo-session";
 import type { JWTPayload } from "jose";
 
 type AuthHandler = (req: NextRequest, jwt: JWTPayload, token: string) => Promise<Response>;
@@ -8,6 +9,11 @@ type AuthHandler = (req: NextRequest, jwt: JWTPayload, token: string) => Promise
 export function withAuth(handler: AuthHandler) {
   return async (req: NextRequest) => {
     try {
+      // This signed, HttpOnly session exists only when the explicit development
+      // simulator flag is enabled. It cannot be supplied in a header or request body.
+      const demoJwt = await readDemoSession(req);
+      if (demoJwt) return handler(req, demoJwt, "");
+
       const token = extractToken(req.headers.get("authorization"));
       const jwt = await verifyTideJWT(token);
       // The signature alone is not enough. This realm issues sender-constrained tokens (cnf.jkt),

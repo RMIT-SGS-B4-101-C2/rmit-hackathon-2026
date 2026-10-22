@@ -18,6 +18,7 @@ function safeDatabaseErrorCode(error: unknown) {
 }
 
 export const GET = withRole("appUser", async (req, jwt) => {
+  if (jwt.demo_mode === true && !((jwt.realm_access as { roles?: string[] })?.roles ?? []).includes("_tide_decryptor")) return json({ error: "Forbidden: this simulated identity lacks _tide_decryptor." }, 403);
   const id = new URL(req.url).searchParams.get("id");
   try {
     if (id !== null) {
@@ -33,6 +34,7 @@ export const GET = withRole("appUser", async (req, jwt) => {
 });
 
 export const POST = withRole("appUser", async (req, jwt) => {
+  if (jwt.demo_mode === true && !((jwt.realm_access as { roles?: string[] })?.roles ?? []).includes("_tide_encryptor")) return json({ error: "Forbidden: this simulated identity lacks _tide_encryptor." }, 403);
   if (Number(req.headers.get("content-length")) > 70 * 1024) return json({ error: "Record too large" }, 413);
   // Bound the stream before parsing, even for chunked requests without Content-Length.
   const reader = req.body?.getReader();
@@ -72,6 +74,7 @@ export const POST = withRole("appUser", async (req, jwt) => {
 });
 
 export const DELETE = withRole("appUser", async (req, jwt) => {
+  if (jwt.demo_mode === true && !((jwt.realm_access as { roles?: string[] })?.roles ?? []).includes("_tide_encryptor")) return json({ error: "Forbidden: this simulated identity lacks _tide_encryptor." }, 403);
   const id = new URL(req.url).searchParams.get("id");
   if (!recordIdSchema.safeParse(id).success) return json({ error: "Invalid record ID" }, 400);
   try {

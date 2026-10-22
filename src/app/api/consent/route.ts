@@ -19,12 +19,18 @@ export const GET = withRole("appUser", async (req, jwt) => {
   try {
     const url = new URL(req.url);
     const grantId = url.searchParams.get("grantId");
+    if (jwt.demo_mode === true && url.searchParams.get("directory") === "1" && !((jwt.realm_access as { roles?: string[] })?.roles ?? []).includes("_tide_decryptor")) return json({ error: "Forbidden: this simulated identity lacks _tide_decryptor." }, 403);
     if (grantId) {
       if (!recordIdSchema.safeParse(grantId).success) return json({ error: "Invalid request" }, 400);
       if (url.searchParams.get("shareMaterials") === "1") {
+        if (jwt.demo_mode === true) {
+          const roles = (jwt.realm_access as { roles?: string[] })?.roles ?? [];
+          if (!roles.includes("_tide_decryptor") || !roles.includes("_tide_encryptor")) return json({ error: "Forbidden: preparing a simulated share requires _tide_decryptor and _tide_encryptor." }, 403);
+        }
         const materials = await getOwnerShareMaterials(jwt.sub!, grantId);
         return materials ? json({ materials }) : json({ error: "Consent or Tide policy is not ready." }, 404);
       }
+      if (jwt.demo_mode === true && !((jwt.realm_access as { roles?: string[] })?.roles ?? []).includes("_tide_decryptor")) return json({ error: "Forbidden: this simulated identity lacks _tide_decryptor." }, 403);
       const grant = await getResearcherGrant(jwt.sub!, grantId);
       return grant ? json({ grant }) : json({ error: "No active consent for this record." }, 404);
     }
@@ -40,6 +46,7 @@ export const GET = withRole("appUser", async (req, jwt) => {
 });
 
 export const POST = withRole("appUser", async (req, jwt) => {
+  if (jwt.demo_mode === true && !((jwt.realm_access as { roles?: string[] })?.roles ?? []).includes("_tide_decryptor")) return json({ error: "Forbidden: requesting research access requires _tide_decryptor in this simulation." }, 403);
   try {
     const parsed = consentRequestSchema.safeParse(await bodyJson(req));
     if (!parsed.success) return json({ error: "Enter a record ID and a clear purpose (12–500 characters)." }, 400);
@@ -47,6 +54,7 @@ export const POST = withRole("appUser", async (req, jwt) => {
     if (!researcherTideKey) return json({ error: "Your Tide identity has no tideuserkey claim yet. Ask the realm administrator to enable the Tide User Key mapper, then sign in again." }, 409);
     const result = await requestConsent(jwt.sub!, researcherTideKey, parsed.data.contributionId, parsed.data.purpose);
     if (!result) return json({ error: "That contribution is unavailable for requests." }, 404);
+    if ("self" in result) return json({ error: "You cannot request your own contribution. Sign in as a different researcher identity." }, 409);
     if ("duplicate" in result) return json({ error: "You already have an active or pending request for this contribution." }, 409);
     return json({ request: result }, 201);
   } catch {
@@ -72,6 +80,7 @@ export const PATCH = withRole("appUser", async (req, jwt) => {
 const sharedSchema = z.object({ ciphertext: z.string().min(16).max(64 * 1024) }).strict();
 
 export const PUT = withRole("appUser", async (req, jwt) => {
+  if (jwt.demo_mode === true && !((jwt.realm_access as { roles?: string[] })?.roles ?? []).includes("_tide_encryptor")) return json({ error: "Forbidden: preparing a simulated share requires _tide_encryptor." }, 403);
   const grantId = new URL(req.url).searchParams.get("grantId");
   if (!recordIdSchema.safeParse(grantId).success) return json({ error: "Invalid request" }, 400);
   try {

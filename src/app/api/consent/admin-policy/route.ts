@@ -3,7 +3,8 @@ import { loadTideConfig } from "@/lib/auth/tidecloakConfig";
 
 export const runtime = "nodejs";
 
-export const GET = withClientRole("realm-management", "tide-realm-admin", async (_req, _jwt, token) => {
+export const GET = withClientRole("realm-management", "tide-realm-admin", async (_req, jwt, token) => {
+  if (jwt.demo_mode === true) return Response.json({ error: "Simulated identities cannot retrieve Tide signing policies." }, { status: 409, headers: { "Cache-Control": "no-store" } });
   try {
     const config = loadTideConfig();
     const endpoint = `${config["auth-server-url"].replace(/\/+$/, "")}/admin/realms/${encodeURIComponent(config.realm)}/iga/role-policies/name/tide-realm-admin`;

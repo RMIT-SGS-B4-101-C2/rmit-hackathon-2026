@@ -101,3 +101,11 @@ time, .record-id { color: #7c8c80; font-size: 11px !important; }
 .answers { overflow-wrap: anywhere; }
 @media (max-width: 720px) { .shell { padding-left: 20px; padding-right: 20px; } .topbar { min-height: 84px; } .brand { font-size: 17px; } .topbar > .badge { display: none; } .hero { padding: 60px 0 40px; } .feature-grid, .vault-grid { grid-template-columns: 1fr; } .feature-grid { gap: 12px; } .vault-grid { gap: 30px; } .page-title { font-size: 36px; } .panel { padding: 22px; } .footer { flex-direction: column; } }
 @media (max-width: 720px) { .directory-grid, .research-requests { grid-template-columns: 1fr; } .history-row { grid-template-columns: 1fr; gap: 0; } .consent-area .section-title { flex-wrap: wrap; } .consent-area .section-title > .text-link { margin: 8px 0 0; width: 100%; } }
+.demo-auth-panel { margin: 28px 0; max-width: 760px; }
+.demo-auth-panel h2 { margin-top: 7px; }
+.demo-auth-panel .inline-actions { flex-wrap: wrap; margin-top: 14px; }
+.demo-auth-panel .inline-actions .button { align-items: flex-start; flex-direction: column; gap: 2px; text-align: left; }
+.demo-auth-panel .inline-actions .button span { color: var(--muted); font-size: 10px; font-weight: 400; }
+.demo-disclaimer { border-top: 1px solid var(--line); margin-top: 18px !important; padding-top: 12px; font-size: 11px !important; }
+.notice.demo-banner { flex-direction: column; gap: 2px; background: #fff5db; border-color: #e9d9a8; color: #66511d; }
+.demo-banner span { font-size: 12px; }

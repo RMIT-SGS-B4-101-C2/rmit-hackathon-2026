@@ -24,6 +24,8 @@ export default defineConfig({
     env: {
       NEXT_DIST_DIR: ".next/security-tests",
       NEXT_TELEMETRY_DISABLED: "1",
+      DEMO_AUTH_ENABLED: "true",
+      DEMO_AUTH_SECRET: "playwright-only-simulator-secret-change-me-32-bytes-min",
       CLIENT_ADAPTER: JSON.stringify({
         realm: "security-test", "auth-server-url": "http://localhost:8999", resource: "security-test-client",
         "public-client": true, "ssl-required": "none", "confidential-port": 0,

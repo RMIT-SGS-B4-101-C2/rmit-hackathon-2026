@@ -11,8 +11,8 @@ The demo now includes a synthetic survey and owner-only Tide vault, researcher a
 - `/research` lets an authenticated researcher request a specific synthetic contribution with a stated purpose. It releases a shared ciphertext only for that researcher's active, unexpired grant; Tide decrypts it in the researcher’s browser.
 - `/admin/policies` lets a Tide realm administrator approve two one-record policies in the enclave: participant write-only and researcher read-only. `/api/consent/policies` checks the policies’ subject keys, exact contribution ID, contract/model, operation, key ID, signature presence, and expiry before storing them.
 - PostgreSQL persistence, owner-scoped record operations, consent state, and activity events. Old `data/vault/` starter files are no longer used or automatically migrated.
-- Responsive participant screens, Zod validation, and four Playwright API security test groups covering authenticated isolation, DPoP binding/replay, and request validation.
-- A setup screen while the real Tide adapter is absent. Protected API requests remain denied; no mock identity is provided.
+- Responsive participant screens, Zod validation, four Playwright API security groups, and an end-to-end simulator test for role denial, consent, sharing, and withdrawal.
+- A setup screen while the real Tide adapter is absent. Protected API requests remain denied. An explicit development-only simulator can exercise app-side identity, role, consent, and ownership checks without live Tide services; it is off by default and never enabled by production builds.
 
 The authenticated API enforces owner/researcher scope, expiry, state transitions, and Tide DPoP. Self-encrypted originals remain private; the participant browser decrypts the original and creates a distinct ciphertext under a Tide write policy for the approved researcher. Withdrawal blocks future app delivery. A researcher who already copied a signed policy or plaintext can retain access until policy expiry or retain the plaintext; never promise immediate per-record cryptographic revocation.
 
@@ -22,7 +22,7 @@ The authenticated API enforces owner/researcher scope, expiry, state transitions
 - Generated random credentials and saved the owner's Tide licence answers in ignored `.env`.
 - Docker Desktop is installed and running after Windows feature setup. PostgreSQL is healthy, and the initial migration has been applied.
 - TideCloak is running with a persistent named volume. Owner enrollment is complete, governance is in Tide mode, and the real adapter was exported to ignored `data/tidecloak.json`.
-- Prisma generation, TypeScript checks, production build, and four API security test groups passed. Fixture tests do not prove live Tide encryption.
+- Prisma generation, TypeScript checks, production build, four API security groups, and the simulated role/consent flow passed. These checks do not prove live Tide encryption.
 - Tide Doctor passes all 18 code, adapter, served-relay, and realm checks. Desktop/mobile browser rendering and the unauthenticated vault gate were checked without uncaught browser errors. See [Stage 1 verification](docs/STAGE_1.md) for the remaining live encryption checks.
 - The original TideCloak login logo was restored at the owner's request; the generated Consent Vault background remains active. Settings were re-signed and served image bytes verified. The owner chose no profile fields for Stage 1, so no onboarding form is added. See [branding](branding/README.md) for the current artwork and saved custom assets.
 - Fixed a callback mismatch: the front-channel provider now owns the token exchange and navigates to the vault only after authentication. A browser regression verifies that a failed token exchange stays visible with retry. The owner subsequently confirmed a successful live login; Doctor alone does not test live token issuance.
@@ -58,6 +58,19 @@ npm.cmd run dev
 Leave that terminal running and open <http://localhost:3000>. The first two service commands start TideCloak and PostgreSQL; the Prisma commands apply any pending migrations and generate the database client. Do not rerun `npm.cmd run init` on this existing realm. Press **Ctrl+C** to stop the app; `npm.cmd run services:down` stops PostgreSQL, and `docker stop research-consent-tidecloak` stops TideCloak without deleting its data.
 
 To preview the production build locally instead, run `npm.cmd run build` followed by `npm.cmd run start`. For a fresh machine or a new checkout without the local realm, follow [Windows environment setup](#windows-environment-setup) first. To demonstrate sharing, also follow the role and identity setup in [docs/DEMO.md](docs/DEMO.md).
+
+### Use the local TideCloak simulator
+
+If live Tide sign-in or ORK services are unavailable, copy these settings into your ignored `.env` file and restart `npm.cmd run dev`:
+
+```dotenv
+DEMO_AUTH_ENABLED=true
+DEMO_AUTH_SECRET=<a private random value of at least 32 characters>
+```
+
+Generate a value in PowerShell with `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"`. On the home page, choose Participant, Researcher, or Realm admin. Switch personas by signing out and choosing the next one. Protected APIs verify a signed, short-lived, HttpOnly session cookie and enforce the selected persona's app roles, record ownership, consent state, and researcher grant. See [the simulation walkthrough](docs/DEMO.md#local-simulated-tidecloak-walkthrough).
+
+The simulator is only for fictional local data. Its survey fixtures are base64 encoded, not encrypted; it does not issue Tide tokens, verify DPoP, sign policies, or call Tide's cryptographic network. Keep these settings out of production and never enter real personal data. Set `DEMO_AUTH_ENABLED=false` when finished. The simulator requires a Tide adapter to be present because the existing browser app still mounts Tide's provider.
 
 ## Windows environment setup
 
@@ -202,6 +215,7 @@ The callback test intercepts the token endpoint with a synthetic failure; it can
 | `scripts/env.ps1` | Local tool PATH for the current development shell |
 | `scripts/init-tidecloak.sh` | First-run Tide bootstrap adapted from the official starter |
 | `src/lib/auth/` | Server JWT and DPoP verification wrappers |
+| `src/lib/auth/demo-session.ts` / `src/app/api/demo-auth/` | Development-only signed persona sessions and role claims |
 | `public/tide_dpop_auth.html` | Byte-exact Tide relay; do not format or add a trailing newline |
 
 `npm.cmd run db:studio` opens Prisma Studio. `docker stop research-consent-tidecloak` stops Tide. Neither deletes persistent data. Supplied ignores cover secrets, generated adapters, vault files, dependencies, tools, and installers.

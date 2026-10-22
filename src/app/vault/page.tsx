@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { useTideCloak } from "@tidecloak/nextjs";
 import { ArrowLeft, Check, Eye, EyeOff, Fingerprint, FlaskConical, LockKeyhole, Plus, Trash2 } from "lucide-react";
 import { ENCRYPTION_TAG, STUDY, SYNTHETIC_SURVEY, surveySchema, type EncryptedRecord, type Survey } from "@/lib/survey";
 import { forgetSession } from "@/lib/session-recovery";
 import { ConsentPanel } from "./consent-panel";
+import { useAppAuth } from "@/lib/auth/use-app-auth";
+import { decodeSimulatedPayload, encodeSimulatedPayload } from "@/lib/demo-payload";
+import { DemoModeBanner, DemoSignInPanel } from "../demo-sign-in-panel";
 
 const absolute = (path: string) => new URL(path, window.location.origin).href;
 const BYTE_CIPHERTEXT_PREFIX = "tide-bytes:v1:";
@@ -39,7 +41,7 @@ function withTimeout<T>(promise: Promise<T>, milliseconds: number, message: stri
 }
 
 export default function VaultPage() {
-  const { authenticated, isInitializing, login, logout, doEncrypt, doDecrypt, secureFetch, getValueFromToken } = useTideCloak();
+  const { authenticated, isInitializing, login, logout, doEncrypt, doDecrypt, secureFetch, getValueFromToken, isDemo, demoRoles } = useAppAuth();
   const [leaving, setLeaving] = useState(false);
   const subject = authenticated && !leaving ? String(getValueFromToken("sub") ?? "") : "";
   const identity = useRef(subject);
@@ -55,6 +57,7 @@ export default function VaultPage() {
   const [error, setError] = useState("");
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const hasOpened = Object.keys(opened).length > 0;
+  const canContribute = !isDemo || demoRoles.includes("_tide_encryptor");
 
   const refresh = useCallback(async () => {
     if (!subject) return;
@@ -84,24 +87,29 @@ export default function VaultPage() {
     const parsed = surveySchema.safeParse(form);
     if (!parsed.success) { setError(parsed.error.issues[0]?.message || "Check your survey answers."); return; }
     const current = subject;
-    setBusy(true); setError(""); setStatus("Encrypting your fictional answers with Tide…");
+    setBusy(true); setError(""); setStatus(isDemo ? "Simulating the Tide encryptor role with a fictional fixture…" : "Encrypting your fictional answers with Tide…");
     try {
-      const result = await withTimeout(
-        doEncrypt([{ data: JSON.stringify(parsed.data), tags: [ENCRYPTION_TAG] }]),
-        45_000,
-        "Tide encryption took too long. Check that your account has the vault self-encrypt role, then sign out and back in.",
-      );
+      let ciphertext: string;
+      if (isDemo) ciphertext = encodeSimulatedPayload(JSON.stringify(parsed.data));
+      else {
+        const result = await withTimeout(
+          doEncrypt([{ data: JSON.stringify(parsed.data), tags: [ENCRYPTION_TAG] }]),
+          45_000,
+          "Tide encryption took too long. Check that your account has the vault self-encrypt role, then sign out and back in.",
+        );
+        if (typeof result?.[0] !== "string" && !(result?.[0] instanceof Uint8Array)) throw new Error("Tide did not return a valid encrypted record.");
+        ciphertext = encodeCiphertext(result[0]);
+      }
       if (identity.current !== current) return;
-      if (typeof result?.[0] !== "string" && !(result?.[0] instanceof Uint8Array)) throw new Error("Tide did not return a valid encrypted record.");
       setStatus("Saving the encrypted record…");
       const response = await withTimeout(secureFetch(absolute("/api/vault"), {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ciphertext: encodeCiphertext(result[0]) }),
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ciphertext }),
       }), 20_000, "The encrypted record was created, but the save request timed out. Check that PostgreSQL and the app server are running, then retry.");
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Unable to save your record.");
       if (identity.current !== current) return;
       setForm({ ...SYNTHETIC_SURVEY, notes: "" });
-      setStatus("Encrypted record saved. Only your account can open it.");
+      setStatus(isDemo ? "Simulated record saved. The fixture is only base64 encoded, not encrypted." : "Encrypted record saved. Only your account can open it.");
       await refresh();
     } catch (err) {
       if (identity.current === current) { setStatus(""); setError(err instanceof Error ? err.message : "Encryption failed. No plaintext was uploaded."); }
@@ -116,8 +124,12 @@ export default function VaultPage() {
       const response = await secureFetch(absolute(`/api/vault?id=${record.id}`), { cache: "no-store" });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Record unavailable.");
-      const result = await doDecrypt([{ encrypted: decodeCiphertext(body.record.ciphertext), tags: [ENCRYPTION_TAG] }]);
-      const plaintext = typeof result?.[0] === "string" ? result[0] : new TextDecoder().decode(result[0]);
+      let plaintext: string;
+      if (isDemo) plaintext = decodeSimulatedPayload(body.record.ciphertext);
+      else {
+        const result = await doDecrypt([{ encrypted: decodeCiphertext(body.record.ciphertext), tags: [ENCRYPTION_TAG] }]);
+        plaintext = typeof result?.[0] === "string" ? result[0] : new TextDecoder().decode(result[0]);
+      }
       const survey = surveySchema.parse(JSON.parse(plaintext));
       if (identity.current === current) { setOpened((items) => ({ ...items, [record.id]: survey })); setStatus("Record opened. Answers hide after 60 seconds or when you leave this tab."); }
     } catch {
@@ -148,20 +160,21 @@ export default function VaultPage() {
 
   if (leaving) return <main className="shell"><p role="status">Signing out of your vault…</p></main>;
   if (isInitializing) return <main className="shell"><p role="status">Connecting to your Tide identity…</p></main>;
-  if (!authenticated) return <main className="shell sign-in"><span className="brand-icon"><Fingerprint /></span><h1>Your private research vault</h1><p>Sign in with TideCloak to create and open your encrypted contributions.</p><button className="button primary" onClick={() => void login()}>Sign in with TideCloak</button><Link href="/" className="text-link">Back to home</Link></main>;
+  if (!authenticated) return <main className="shell sign-in"><span className="brand-icon"><Fingerprint /></span><h1>Your private research vault</h1><p>Sign in with TideCloak to create and open your encrypted contributions.</p><button className="button primary" onClick={() => void login()}>Sign in with TideCloak</button><DemoSignInPanel /><Link href="/" className="text-link">Back to home</Link></main>;
 
   return <main className="shell">
     <header className="topbar"><Link className="brand" href="/"><span className="brand-icon"><Fingerprint size={23} /></span>Consent Vault</Link><button className="button secondary small" onClick={() => void signOut()}>Sign out</button></header>
     <div className="page-heading"><Link className="text-link" href="/"><ArrowLeft size={14} /> Home</Link><span className="badge"><LockKeyhole size={13} /> Private to your account</span></div>
+    <DemoModeBanner />
     <h1 className="page-title">My research vault<span className="accent">.</span></h1>
-    <p className="lead compact">Start with a fictional contribution. Your answers stay encrypted until you choose to open them.</p>
+    <p className="lead compact">{isDemo ? "Use this local simulator to exercise participant ownership, consent, and role checks." : "Start with a fictional contribution. Your answers stay encrypted until you choose to open them."}</p>
     {status && <p className="notice" role="status">{status}</p>}{error && <p className="notice error" role="alert">{error} <button className="text-link" onClick={() => setError("")}>Dismiss</button></p>}
-    <div className="notice"><FlaskConical size={19} /><div><strong>Demo study · {STUDY.title}</strong><p>Use made-up answers only. Sharing requires your consent and separate, record-scoped Tide policies.</p></div></div>
+    <div className="notice"><FlaskConical size={19} /><div><strong>Demo study · {STUDY.title}</strong><p>{isDemo ? "Use fictional answers only. In simulator mode the fixture is base64 encoded, not encrypted; consent and simulated admin approval remain separate gates." : "Use made-up answers only. Sharing requires your consent and separate, record-scoped Tide policies."}</p></div></div>
     <div className="vault-grid">
       <section className="panel survey-panel">
         <div className="section-title"><span className="number">01</span><h2>New contribution</h2></div>
-        <p>These answers are encrypted together before upload.</p>
-        <form onSubmit={(event) => void save(event)}>
+        <p>{isDemo ? "The participant simulator has _tide_encryptor." : "These answers are encrypted together before upload."}</p>
+        {canContribute ? <form onSubmit={(event) => void save(event)}>
           <fieldset disabled={busy}>
             <label htmlFor="sleep">Sleep per night <span>hours</span></label><input id="sleep" type="number" min="0" max="24" step="0.5" required value={form.sleepHours} onChange={(e) => setForm({ ...form, sleepHours: e.target.valueAsNumber })} />
             <label htmlFor="study">Study per day <span>hours</span></label><input id="study" type="number" min="0" max="24" step="0.5" required value={form.studyHours} onChange={(e) => setForm({ ...form, studyHours: e.target.valueAsNumber })} />
@@ -170,23 +183,23 @@ export default function VaultPage() {
             <button type="button" className="text-link sample" onClick={() => setForm({ ...SYNTHETIC_SURVEY })}><Plus size={14} /> Fill a synthetic example</button>
             <button type="submit" className="button primary wide"><LockKeyhole size={16} />{busy ? "Working…" : "Encrypt & save contribution"}</button>
           </fieldset>
-        </form>
+        </form> : <div className="empty-state compact-empty"><LockKeyhole size={22} /><p>This identity has no _tide_encryptor role, so it cannot create or delete contributions.</p></div>}
       </section>
-      <section className="records-panel" aria-label="My encrypted contributions">
+      <section className="records-panel" aria-label="My contributions">
         <div className="section-title"><span className="number">02</span><h2>My contributions</h2><span className="count">{records.length}</span></div>
         <p className="quiet">Latest 100 records · visible only to your account</p>
         {loading && <p role="status">Loading encrypted records…</p>}
-        {!loading && !records.length && <div className="empty-state"><LockKeyhole size={30} /><h3>Your vault starts here</h3><p>Save your first synthetic contribution.<br />Your survey answers will remain encrypted.</p></div>}
+        {!loading && !records.length && <div className="empty-state"><LockKeyhole size={30} /><h3>Your vault starts here</h3><p>{isDemo ? "Save a fictional simulated contribution with the participant role." : <>Save your first synthetic contribution.<br />Your survey answers will remain encrypted.</>}</p></div>}
         {records.map((record) => <article className="panel record" key={record.id}>
-          <div className="record-top"><span className="badge"><Check size={12} /> Encrypted</span><time dateTime={record.createdAt}>{new Date(record.createdAt).toLocaleDateString()}</time></div>
+          <div className="record-top"><span className="badge"><Check size={12} /> {isDemo ? "Simulated fixture" : "Encrypted"}</span><time dateTime={record.createdAt}>{new Date(record.createdAt).toLocaleDateString()}</time></div>
           <h3>{STUDY.title}</h3><p className="record-id">Record {record.id.slice(0, 8)}</p>
-          {opened[record.id] ? <div className="answers"><dl><div><dt>Sleep / night</dt><dd>{opened[record.id].sleepHours} hours</dd></div><div><dt>Study / day</dt><dd>{opened[record.id].studyHours} hours</dd></div><div><dt>Wellbeing</dt><dd>{opened[record.id].wellbeing}</dd></div></dl>{opened[record.id].notes && <p>{opened[record.id].notes}</p>}</div> : <div className="sealed"><LockKeyhole size={15} /><span>Survey answers are encrypted</span></div>}
-          <div className="record-actions">{opened[record.id] ? <button className="button secondary small" onClick={() => setOpened((items) => { const copy = { ...items }; delete copy[record.id]; return copy; })}><EyeOff size={14} /> Hide answers</button> : <button className="button secondary small" disabled={busy} onClick={() => void open(record)}><Eye size={14} /> Open record</button>}<button className="icon-button" disabled={busy} aria-label={`Delete record ${record.id.slice(0, 8)}`} onClick={() => setPendingDelete(record.id)}><Trash2 size={16} /></button></div>
+          {opened[record.id] ? <div className="answers"><dl><div><dt>Sleep / night</dt><dd>{opened[record.id].sleepHours} hours</dd></div><div><dt>Study / day</dt><dd>{opened[record.id].studyHours} hours</dd></div><div><dt>Wellbeing</dt><dd>{opened[record.id].wellbeing}</dd></div></dl>{opened[record.id].notes && <p>{opened[record.id].notes}</p>}</div> : <div className="sealed"><LockKeyhole size={15} /><span>{isDemo ? "Fictional fixture hidden" : "Survey answers are encrypted"}</span></div>}
+          <div className="record-actions">{opened[record.id] ? <button className="button secondary small" onClick={() => setOpened((items) => { const copy = { ...items }; delete copy[record.id]; return copy; })}><EyeOff size={14} /> Hide answers</button> : <button className="button secondary small" disabled={busy} onClick={() => void open(record)}><Eye size={14} /> Open record</button>}{canContribute && <button className="icon-button" disabled={busy} aria-label={`Delete record ${record.id.slice(0, 8)}`} onClick={() => setPendingDelete(record.id)}><Trash2 size={16} /></button>}</div>
           {pendingDelete === record.id && <div className="delete-confirm"><p>Delete this encrypted contribution from your vault?</p><button className="button danger small" disabled={busy} onClick={() => void remove(record.id)}>Delete contribution</button><button className="button secondary small" disabled={busy} onClick={() => setPendingDelete(null)}>Keep it</button></div>}
         </article>)}
       </section>
     </div>
     <ConsentPanel />
-    <footer className="footer">Your answers are encrypted with TideCloak.<span>Participant consent · scoped sharing · audit history</span></footer>
+    <footer className="footer">{isDemo ? "Simulated mode: fictional fixture only; no encryption is performed." : "Your answers are encrypted with TideCloak."}<span>Participant consent · scoped sharing · audit history</span></footer>
   </main>;
 }
