@@ -2,7 +2,7 @@
 
 ## Current result
 
-Enrollment and realm provisioning completed, but real application login fails during session-token signing. The user sees “Sign-in could not be completed.” Live encrypted save/open and independent-identity checks cannot proceed yet. This report contains no credentials, tokens, authorization codes, or participant identity keys.
+The owner reported a successful live TideCloak login on 22 October 2026, after the earlier failures documented below. The login blocker is no longer observed in that attempt; the underlying cause of the earlier signing failures has not been established. Live encrypted save/open and independent-identity checks remain pending. This report contains no credentials, tokens, authorization codes, or participant identity keys.
 
 ## Application callback correction
 
@@ -55,11 +55,11 @@ These checks have not identified a missing role, unapproved change, or callback 
 | Transitive `@tidecloak/js` / `@tidecloak/react` | `0.14.41` / `0.14.33` |
 | Tide MCP agent pack | `1.9.33` |
 
-## Next investigation
+## If the signing failure returns
 
 Share this report with the Tide hackathon technical team. Ask them to inspect the ORK rejection for `TidecloakSessionStartTokenSign:1` at the UTC timestamps above and confirm the supported server/Fabric version combination or any required realm repair. A version mismatch is a possibility to investigate, not a confirmed diagnosis.
 
-After a supported correction, retry real login and complete the acceptance checklist in [STAGE_1.md](STAGE_1.md). Preserve the existing realm and persistent volume. No realm reset, image downgrade, or authentication fallback has been applied.
+With login now reported successful, proceed with the acceptance checklist in [STAGE_1.md](STAGE_1.md). If the failure returns, collect new timestamps for investigation. Preserve the existing realm and persistent volume. No realm reset, image downgrade, or authentication fallback has been applied.
 
 To repeat the local checks from the README's development shell:
 

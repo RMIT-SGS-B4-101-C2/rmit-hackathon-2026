@@ -2,11 +2,13 @@
 
 Stage 1 implements Tide login wiring, browser-side self-encryption of a structured synthetic survey, and PostgreSQL persistence with owner-scoped access. Researcher sharing and consent controls are Stage 2 work.
 
+On 22 October 2026, the owner confirmed a successful live TideCloak login. The earlier login blocker is no longer observed in that attempt. Live encrypted save/open, persistence after reload, and second-identity API/Fabric isolation remain unverified; Stage 1 acceptance is still in progress.
+
 ## Local prerequisites
 
 Start Docker Desktop, PostgreSQL (`npm.cmd run services:up`), and the existing Tide container (`docker start research-consent-tidecloak`). Apply migrations with `npm.cmd run db:migrate` on a new checkout, then run `npm.cmd run dev` in the development shell described in the README.
 
-Owner enrollment and the first realm bootstrap are complete. The real adapter is saved in ignored `data/tidecloak.json`. Do not rerun provisioning or delete the existing realm. The owner selected generated Consent Vault login branding and no profile collection for Stage 1.
+Owner enrollment and the first realm bootstrap are complete. The real adapter is saved in ignored `data/tidecloak.json`. Do not rerun provisioning or delete the existing realm. The owner selected no profile collection for Stage 1. The login now uses TideCloak's original logo with the generated Consent Vault background; the settings were re-signed and image bytes verified after restoring the logo.
 
 ## What is implemented
 
@@ -60,4 +62,4 @@ Record the actual results, SDK/image version, and any failure without substituti
 
 ## Runtime state at implementation
 
-The initial PostgreSQL migration was applied and the four API security test groups passed. Owner enrollment, adapter export, and realm bootstrap are complete. Tide Doctor passes all 18 checks, with no pending governance changes. The generated logo/background were uploaded, signed, and verified to match the served bytes. Profile collection is disabled for this stage, and a read-only realm diagnostic confirms no post-signup form will fire. Desktop/mobile home rendering and the unauthenticated vault gate were checked without uncaught browser errors. Live encrypted save/open and the second-identity Fabric check remain pending; fixture tests do not substitute for them. The image pulled for this setup was `tideorg/tidecloak-dev:latest` at digest `sha256:3f52d0bc3e4e3ae5153e172960003bbe94705cd40af6561fd4c7c4434aaa2708`.
+The initial PostgreSQL migration was applied and the four API security test groups passed. Owner enrollment, adapter export, and realm bootstrap are complete. Tide Doctor passes all 18 checks, with no pending governance changes. TideCloak's original logo and the generated Consent Vault background are active, signed, and verified to match the served bytes. Profile collection is disabled for this stage, and a read-only realm diagnostic confirms no post-signup form will fire. Desktop/mobile home rendering and the unauthenticated vault gate were checked without uncaught browser errors. Live encrypted save/open and the second-identity Fabric check remain pending; fixture tests do not substitute for them. The image pulled for this setup was `tideorg/tidecloak-dev:latest` at digest `sha256:3f52d0bc3e4e3ae5153e172960003bbe94705cd40af6561fd4c7c4434aaa2708`.

@@ -4,7 +4,7 @@ RMIT Hackathon 2026: participants contribute synthetic research records, approve
 
 ## Implementation status
 
-Stage 1 code is implemented: a synthetic survey, browser-side Tide self-encryption, and an owner-only PostgreSQL vault. The complete research consent portal is still to be built. Tide enrollment and realm setup are complete, but live login is blocked by Tide session-token signing errors. See [login diagnostics](docs/TIDE_LOGIN_DIAGNOSTICS.md). Real encrypted save/open and second-identity acceptance checks remain pending.
+Stage 1 code is implemented: a synthetic survey, browser-side Tide self-encryption, and an owner-only PostgreSQL vault. The complete research consent portal is still to be built. Tide enrollment and realm setup are complete, and the owner reported a successful live TideCloak login on 22 October 2026. Real encrypted save/open and second-identity acceptance checks remain pending. Earlier signing failures are recorded in [login diagnostics](docs/TIDE_LOGIN_DIAGNOSTICS.md).
 
 - Next.js App Router, TypeScript, Tide SDK, server-side JWT verification, and DPoP proofs.
 - `/vault` collects fictional sleep/study survey responses, encrypts the full response before upload, and opens records through Tide in the browser. Open answers hide within 60 seconds or when the tab is hidden.
@@ -22,8 +22,8 @@ Researcher sharing, policy signing, consent requests, withdrawal, expiry enforce
 - TideCloak is running with a persistent named volume. Owner enrollment is complete, governance is in Tide mode, and the real adapter was exported to ignored `data/tidecloak.json`.
 - Prisma generation, TypeScript checks, production build, and four API security test groups passed. Fixture tests do not prove live Tide encryption.
 - Tide Doctor passes all 18 code, adapter, served-relay, and realm checks. Desktop/mobile browser rendering and the unauthenticated vault gate were checked without uncaught browser errors. See [Stage 1 verification](docs/STAGE_1.md) for the remaining live encryption checks.
-- Consent Vault login branding is generated, uploaded, signed, and byte-verified. The owner chose no profile fields for Stage 1, so no onboarding form is added. See [branding](branding/README.md) for regeneration instructions.
-- Fixed a callback mismatch: the front-channel provider now owns the token exchange and navigates to the vault only after authentication. A browser regression verifies that a failed token exchange stays visible with retry. Real attempts still fail on Tide's `TidecloakSessionStartTokenSign:1` model; Doctor does not test successful live token issuance.
+- The original TideCloak login logo was restored at the owner's request; the generated Consent Vault background remains active. Settings were re-signed and served image bytes verified. The owner chose no profile fields for Stage 1, so no onboarding form is added. See [branding](branding/README.md) for the current artwork and saved custom assets.
+- Fixed a callback mismatch: the front-channel provider now owns the token exchange and navigates to the vault only after authentication. A browser regression verifies that a failed token exchange stays visible with retry. The owner subsequently confirmed a successful live login; Doctor alone does not test live token issuance.
 
 ## Recommended stack
 
