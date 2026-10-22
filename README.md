@@ -52,4 +52,4 @@ npm.cmd run typecheck
 npm.cmd run test:security
 ```
 
-The Playwright security tests start a separate app server on port `3101` and test the API and simulated consent flow against the configured local database. They do not test Tide's cryptographic network or prove live encryption. See [the two-minute recording script](docs/VIDEO_SCRIPT.md) for a timed presentation walkthrough.
+The Playwright security tests start a separate app server on port `3101` and test the API and simulated consent flow against the configured local database. They do not test Tide's cryptographic network or prove live encryption.
