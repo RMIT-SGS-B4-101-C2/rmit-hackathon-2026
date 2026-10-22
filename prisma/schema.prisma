@@ -7,6 +7,8 @@ datasource db {
 }
 
 enum ConsentStatus {
+  REQUESTED
+  DENIED
   PENDING_POLICY
   ACTIVE
   WITHDRAWN
@@ -23,6 +25,7 @@ model Study {
 model Contribution {
   id                 String         @id @default(uuid()) @db.Uuid
   participantSubject String
+  participantTideKey String         @default("")
   studyId            String         @db.Uuid
   ciphertext         String         @db.Text
   encryptionTag      String
@@ -37,15 +40,19 @@ model ConsentGrant {
   id                String        @id @default(uuid()) @db.Uuid
   contributionId    String        @db.Uuid
   researcherSubject String
+  researcherTideKey String
   purpose           String
   status            ConsentStatus @default(PENDING_POLICY)
   expiresAt         DateTime
   withdrawnAt       DateTime?
   signedPolicy      String?       @db.Text
+  ownerWritePolicy  String?       @db.Text
+  sharedCiphertext  String?       @db.Text
   createdAt         DateTime      @default(now())
   contribution      Contribution  @relation(fields: [contributionId], references: [id])
 
   @@index([contributionId, researcherSubject, status])
+  @@index([researcherSubject, status, expiresAt])
 }
 
 // Application event history; not a tamper-proof ledger or proof of plaintext viewing.
@@ -54,6 +61,7 @@ model AuditEvent {
   actor      String
   action     String
   resourceId String
+  details    Json?
   createdAt  DateTime @default(now())
 
   @@index([resourceId, createdAt])

@@ -14,7 +14,6 @@ build/
 .env.*.local
 .env.*
 !.env.example
-scripts/.skycloak-api-key
 
 # Local TideCloak state (adapter export + H2 volume)
 data/tidecloak.json

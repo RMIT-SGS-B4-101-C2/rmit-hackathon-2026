@@ -5,8 +5,38 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { useTideCloak } from "@tidecloak/nextjs";
 import { ArrowLeft, Check, Eye, EyeOff, Fingerprint, FlaskConical, LockKeyhole, Plus, Trash2 } from "lucide-react";
 import { ENCRYPTION_TAG, STUDY, SYNTHETIC_SURVEY, surveySchema, type EncryptedRecord, type Survey } from "@/lib/survey";
+import { forgetSession } from "@/lib/session-recovery";
+import { ConsentPanel } from "./consent-panel";
 
 const absolute = (path: string) => new URL(path, window.location.origin).href;
+const BYTE_CIPHERTEXT_PREFIX = "tide-bytes:v1:";
+
+function encodeCiphertext(value: string | Uint8Array): string {
+  if (typeof value === "string") return value;
+  // Tide can return binary ciphertext. Store it as base64 in the JSON envelope,
+  // then restore the original bytes before calling doDecrypt.
+  let binary = "";
+  for (let offset = 0; offset < value.length; offset += 0x8000) {
+    binary += String.fromCharCode(...value.subarray(offset, offset + 0x8000));
+  }
+  return BYTE_CIPHERTEXT_PREFIX + btoa(binary);
+}
+
+function decodeCiphertext(value: string): string | Uint8Array {
+  if (!value.startsWith(BYTE_CIPHERTEXT_PREFIX)) return value;
+  const binary = atob(value.slice(BYTE_CIPHERTEXT_PREFIX.length));
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+function withTimeout<T>(promise: Promise<T>, milliseconds: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(message)), milliseconds);
+    promise.then(
+      (value) => { window.clearTimeout(timer); resolve(value); },
+      (error) => { window.clearTimeout(timer); reject(error); },
+    );
+  });
+}
 
 export default function VaultPage() {
   const { authenticated, isInitializing, login, logout, doEncrypt, doDecrypt, secureFetch, getValueFromToken } = useTideCloak();
@@ -56,13 +86,17 @@ export default function VaultPage() {
     const current = subject;
     setBusy(true); setError(""); setStatus("Encrypting your fictional answers with Tide…");
     try {
-      const result = await doEncrypt([{ data: JSON.stringify(parsed.data), tags: [ENCRYPTION_TAG] }]);
+      const result = await withTimeout(
+        doEncrypt([{ data: JSON.stringify(parsed.data), tags: [ENCRYPTION_TAG] }]),
+        45_000,
+        "Tide encryption took too long. Check that your account has the vault self-encrypt role, then sign out and back in.",
+      );
       if (identity.current !== current) return;
-      if (typeof result?.[0] !== "string") throw new Error("Tide did not return a valid encrypted record.");
+      if (typeof result?.[0] !== "string" && !(result?.[0] instanceof Uint8Array)) throw new Error("Tide did not return a valid encrypted record.");
       setStatus("Saving the encrypted record…");
-      const response = await secureFetch(absolute("/api/vault"), {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ciphertext: result[0] }),
-      });
+      const response = await withTimeout(secureFetch(absolute("/api/vault"), {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ciphertext: encodeCiphertext(result[0]) }),
+      }), 20_000, "The encrypted record was created, but the save request timed out. Check that PostgreSQL and the app server are running, then retry.");
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Unable to save your record.");
       if (identity.current !== current) return;
@@ -82,7 +116,7 @@ export default function VaultPage() {
       const response = await secureFetch(absolute(`/api/vault?id=${record.id}`), { cache: "no-store" });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Record unavailable.");
-      const result = await doDecrypt([{ encrypted: body.record.ciphertext, tags: [ENCRYPTION_TAG] }]);
+      const result = await doDecrypt([{ encrypted: decodeCiphertext(body.record.ciphertext), tags: [ENCRYPTION_TAG] }]);
       const plaintext = typeof result?.[0] === "string" ? result[0] : new TextDecoder().decode(result[0]);
       const survey = surveySchema.parse(JSON.parse(plaintext));
       if (identity.current === current) { setOpened((items) => ({ ...items, [record.id]: survey })); setStatus("Record opened. Answers hide after 60 seconds or when you leave this tab."); }
@@ -105,6 +139,7 @@ export default function VaultPage() {
   }
 
   async function signOut() {
+    forgetSession();
     setLeaving(true); setOpened({}); setForm({ ...SYNTHETIC_SURVEY, notes: "" });
     try { await logout(); }
     catch { setError("Sign-out could not finish. Please try again."); }
@@ -120,7 +155,8 @@ export default function VaultPage() {
     <div className="page-heading"><Link className="text-link" href="/"><ArrowLeft size={14} /> Home</Link><span className="badge"><LockKeyhole size={13} /> Private to your account</span></div>
     <h1 className="page-title">My research vault<span className="accent">.</span></h1>
     <p className="lead compact">Start with a fictional contribution. Your answers stay encrypted until you choose to open them.</p>
-    <div className="notice"><FlaskConical size={19} /><div><strong>Demo study · {STUDY.title}</strong><p>Use made-up answers only. Researcher sharing and consent controls arrive in the next stage.</p></div></div>
+    {status && <p className="notice" role="status">{status}</p>}{error && <p className="notice error" role="alert">{error} <button className="text-link" onClick={() => setError("")}>Dismiss</button></p>}
+    <div className="notice"><FlaskConical size={19} /><div><strong>Demo study · {STUDY.title}</strong><p>Use made-up answers only. Sharing requires your consent and separate, record-scoped Tide policies.</p></div></div>
     <div className="vault-grid">
       <section className="panel survey-panel">
         <div className="section-title"><span className="number">01</span><h2>New contribution</h2></div>
@@ -150,7 +186,7 @@ export default function VaultPage() {
         </article>)}
       </section>
     </div>
-    {status && <p className="notice" role="status">{status}</p>}{error && <p className="notice error" role="alert">{error} <button className="text-link" onClick={() => { setError(""); void refresh(); }}>Retry loading</button></p>}
-    <footer className="footer">Your answers are encrypted with TideCloak.<span>Stage 1 · Private contributions</span></footer>
+    <ConsentPanel />
+    <footer className="footer">Your answers are encrypted with TideCloak.<span>Participant consent · scoped sharing · audit history</span></footer>
   </main>;
 }

@@ -27,6 +27,18 @@ export const uploadSchema = z.object({
   ciphertext: z.string().min(16).max(64 * 1024),
 }).strict();
 export const recordIdSchema = z.uuid();
+export const consentRequestSchema = z.object({
+  contributionId: z.uuid(),
+  purpose: z.string().trim().min(12).max(500),
+}).strict();
+export const consentDecisionSchema = z.object({
+  decision: z.enum(["approve", "deny", "withdraw"]),
+}).strict();
+export const signedPolicySchema = z.object({
+  grantId: z.uuid(),
+  readPolicy: z.string().min(32).max(32 * 1024),
+  ownerWritePolicy: z.string().min(32).max(32 * 1024),
+}).strict();
 
 export interface EncryptedRecord {
   id: string;

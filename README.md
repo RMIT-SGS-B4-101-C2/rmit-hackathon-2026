@@ -4,15 +4,17 @@ RMIT Hackathon 2026: participants contribute synthetic research records, approve
 
 ## Implementation status
 
-Stage 1 code is implemented: a synthetic survey, browser-side Tide self-encryption, and an owner-only PostgreSQL vault. The complete research consent portal is still to be built. Tide enrollment and realm setup are complete, and the owner reported a successful live TideCloak login on 22 October 2026. Real encrypted save/open and second-identity acceptance checks remain pending. Earlier signing failures are recorded in [login diagnostics](docs/TIDE_LOGIN_DIAGNOSTICS.md).
+The demo now includes a synthetic survey and owner-only Tide vault, researcher access requests, participant approval/denial/withdrawal, an administrator policy desk, a separate encrypted share, and an activity timeline. Tide enrollment and realm setup are complete, and the owner reported a successful live TideCloak login on 22 October 2026. Real encrypted save/open and two-identity sharing checks remain pending. Earlier sign-in diagnostics are in [login diagnostics](docs/TIDE_LOGIN_DIAGNOSTICS.md); the click-by-click demo is in [docs/DEMO.md](docs/DEMO.md).
 
 - Next.js App Router, TypeScript, Tide SDK, server-side JWT verification, and DPoP proofs.
-- `/vault` collects fictional sleep/study survey responses, encrypts the full response before upload, and opens records through Tide in the browser. Open answers hide within 60 seconds or when the tab is hidden.
-- PostgreSQL persistence, an applied initial Prisma migration, owner-scoped list/read/delete operations, and atomic create/delete activity events. Old `data/vault/` starter files are no longer used or automatically migrated.
+- `/vault` collects fictional sleep/study survey responses, encrypts the full response before upload, and opens records through Tide in the browser. Participants review named requests, approve/deny/withdraw, prepare a separate ciphertext only after Tide policies are signed, and inspect activity history. Open answers hide within 60 seconds or when the tab is hidden.
+- `/research` lets an authenticated researcher request a specific synthetic contribution with a stated purpose. It releases a shared ciphertext only for that researcher's active, unexpired grant; Tide decrypts it in the researcher’s browser.
+- `/admin/policies` lets a Tide realm administrator approve two one-record policies in the enclave: participant write-only and researcher read-only. `/api/consent/policies` checks the policies’ subject keys, exact contribution ID, contract/model, operation, key ID, signature presence, and expiry before storing them.
+- PostgreSQL persistence, owner-scoped record operations, consent state, and activity events. Old `data/vault/` starter files are no longer used or automatically migrated.
 - Responsive participant screens, Zod validation, and four Playwright API security test groups covering authenticated isolation, DPoP binding/replay, and request validation.
 - A setup screen while the real Tide adapter is absent. Protected API requests remain denied; no mock identity is provided.
 
-Researcher sharing, policy signing, consent requests, withdrawal, expiry enforcement, and role dashboards are planned. Self-encrypted prototype entries cannot be made shareable just by changing a database flag.
+The authenticated API enforces owner/researcher scope, expiry, state transitions, and Tide DPoP. Self-encrypted originals remain private; the participant browser decrypts the original and creates a distinct ciphertext under a Tide write policy for the approved researcher. Withdrawal blocks future app delivery. A researcher who already copied a signed policy or plaintext can retain access until policy expiry or retain the plaintext; never promise immediate per-record cryptographic revocation.
 
 ### Assisted setup status (22 October 2026)
 
@@ -24,6 +26,7 @@ Researcher sharing, policy signing, consent requests, withdrawal, expiry enforce
 - Tide Doctor passes all 18 code, adapter, served-relay, and realm checks. Desktop/mobile browser rendering and the unauthenticated vault gate were checked without uncaught browser errors. See [Stage 1 verification](docs/STAGE_1.md) for the remaining live encryption checks.
 - The original TideCloak login logo was restored at the owner's request; the generated Consent Vault background remains active. Settings were re-signed and served image bytes verified. The owner chose no profile fields for Stage 1, so no onboarding form is added. See [branding](branding/README.md) for the current artwork and saved custom assets.
 - Fixed a callback mismatch: the front-channel provider now owns the token exchange and navigates to the vault only after authentication. A browser regression verifies that a failed token exchange stays visible with retry. The owner subsequently confirmed a successful live login; Doctor alone does not test live token issuance.
+- Vault reloads now attempt one top-level session recovery when a previously authenticated tab cannot restore its session silently. The per-tab hint contains no tokens, is cleared on sign-out, and is consumed before redirecting to prevent loops. The callback regression covers the recovery and failure paths; successful live restoration remains a browser acceptance check.
 
 ## Recommended stack
 
@@ -31,13 +34,30 @@ Researcher sharing, policy signing, consent requests, withdrawal, expiry enforce
 | --- | --- | --- |
 | App and API | Next.js 16 + TypeScript | One project for UI and server endpoints |
 | Identity and encryption | TideCloak + `@tidecloak/nextjs` | Login, governed permissions, browser E2EE |
-| UI | Tailwind CSS + shadcn/ui | Dashboards and consent forms |
+| UI | Next.js React + project CSS + Lucide icons | Participant, researcher, and admin portals |
 | Data | PostgreSQL 17 + Prisma 7 | Studies, contributions, grants, activity |
 | Validation | Zod | Form and request validation |
 | Browser verification | Playwright | Independent participant/researcher sessions |
 | Local services | Docker Desktop / Compose | PostgreSQL and local TideCloak |
 
 Node.js 24 is pinned in `.node-version`. Commit `package-lock.json` and use `npm ci` on an existing checkout. Recheck Tide SDK/server compatibility when upgrading.
+
+## Run the app (existing setup)
+
+Use this on the machine that already has the local TideCloak realm, `.env`, and `data/tidecloak.json`. From the repository root, open PowerShell and run:
+
+```powershell
+. .\scripts\env.ps1
+docker start research-consent-tidecloak
+npm.cmd run services:up
+npm.cmd run db:migrate
+npm.cmd run db:generate
+npm.cmd run dev
+```
+
+Leave that terminal running and open <http://localhost:3000>. The first two service commands start TideCloak and PostgreSQL; the Prisma commands apply any pending migrations and generate the database client. Do not rerun `npm.cmd run init` on this existing realm. Press **Ctrl+C** to stop the app; `npm.cmd run services:down` stops PostgreSQL, and `docker stop research-consent-tidecloak` stops TideCloak without deleting its data.
+
+To preview the production build locally instead, run `npm.cmd run build` followed by `npm.cmd run start`. For a fresh machine or a new checkout without the local realm, follow [Windows environment setup](#windows-environment-setup) first. To demonstrate sharing, also follow the role and identity setup in [docs/DEMO.md](docs/DEMO.md).
 
 ## Windows environment setup
 
@@ -171,6 +191,10 @@ The callback test intercepts the token endpoint with a synthetic failure; it can
 | `compose.yaml` | PostgreSQL and persistent named volume |
 | `prisma/schema.prisma` | Starting studies, ciphertext contributions, grants, and event schema |
 | `src/lib/db.ts` / `src/lib/vault-store.ts` | Prisma connection and owner-scoped encrypted-record persistence |
+| `src/app/api/consent/route.ts` | Consent requests, decisions, shared ciphertext, and scoped researcher delivery |
+| `src/app/api/consent/policies/route.ts` | Admin policy queue and policy-scope/expiry checks |
+| `src/lib/relationship.ts` | Tide `RelationshipAttestation:1` signing and browser encrypt/decrypt helpers |
+| `docs/DEMO.md` | Two-identity demo walkthrough and remaining live checks |
 | `src/lib/survey.ts` | Fixed demo study, synthetic survey schema, ciphertext-envelope validation |
 | `tests/api.security.spec.ts` | Real API/PostgreSQL integration checks with ephemeral fixture credentials |
 | `docs/STAGE_1.md` | Stage 1 acceptance checks and implementation limits |
@@ -188,12 +212,12 @@ Run `npm.cmd run test:security` with local PostgreSQL ready. This starts an isol
 
 | Stage | Deliverable | Completion check |
 | --- | --- | --- |
-| 1. Identity and encryption | Real Tide login and one synthetic encrypted survey | Owner decrypts; another identity cannot |
-| 2. Sharing and withdrawal | Named-recipient Tide policy and consent mapping | Approved researcher decrypts, unrelated researcher fails; withdrawal timing measured |
-| 3. Participant dashboard | Contributions, requests, expiry, grant/withdraw controls | Participant completes the flow through the app |
-| 4. Researcher dashboard | Study descriptions, purpose-based requests, permitted record viewer | Only approved researchers with active scoped grants see records |
-| 5. Activity history | Requests, grants, withdrawal, access, and reported decryption | Participant can inspect a clear timeline |
-| 6. Demo and checks | Synthetic fixtures and meaningful Playwright scenarios | Independent sessions reproduce allowed and denied cases |
+| 1. Identity and encryption | Implemented | Live owner save/open and second identity still need acceptance |
+| 2. Sharing and withdrawal | Implemented with Tide relationship policies | Live two-identity encrypt/decrypt and withdrawal expiry still need acceptance |
+| 3. Participant dashboard | Implemented | Complete with a real consent request |
+| 4. Researcher dashboard | Implemented | Complete with an active signed grant |
+| 5. Activity history | Implemented | Ordinary application history, not proof of plaintext viewing or an immutable ledger |
+| 6. Demo and checks | Demo path documented | Run live steps in [docs/DEMO.md](docs/DEMO.md); fixture API checks do not prove Fabric behavior |
 
 Start with structured synthetic sleep/study-habit surveys. Add documents, bulk exports, large files, and AI analysis after the consent flow works.
 
@@ -205,7 +229,7 @@ Sharing will adapt Tide's built-in `RelationshipAttestation:1` contract. Each sh
 
 Prove this mapping with real separate identities before building dashboards. The MCP documents role/group updates taking token refresh, up to 120 seconds. Immediate API denial and cryptographic revocation are separate checks: test retained ciphertext, policies, and credentials before promising instant decryption revocation.
 
-The initial schema includes named researcher identity, contribution/study, purpose, expiry, withdrawal state, and optional signed policy. Researcher approval and access-request workflows remain to be implemented. A general researcher role never grants access to all participants' data.
+The schema includes named researcher identity, contribution/study, purpose, expiry, withdrawal state, and scoped signed policies. A general researcher role never grants access to all participants' data. The policy desk requires the `tide-realm-admin` client role on `realm-management`; participants and researchers need the corresponding `_tide_encryptor` / `_tide_decryptor` realm role, and the network must contain `RelationshipAttestation:1`.
 
 ### Demo story
 

@@ -13,6 +13,7 @@ Owner enrollment and the first realm bootstrap are complete. The real adapter is
 ## What is implemented
 
 - `/` introduces the project and offers TideCloak login.
+- A previously signed-in vault tab attempts one top-level Tide login redirect if the SDK's silent session check cannot restore it after reload. A non-secret sessionStorage hint is consumed before that redirect and cleared on sign-out; it grants no access. Fresh visitors retain the sign-in gate, and failed recovery does not loop. An active Tide SSO session can complete the redirect without asking for credentials again.
 - `/vault` collects fictional sleep hours, study hours, wellbeing, and optional fictional notes. “Fill a synthetic example” populates demonstration values.
 - The client validates and serializes the complete survey, then calls Tide `doEncrypt` with the self-encryption tag `vault`.
 - `POST /api/vault` accepts only `{ ciphertext }`, limits the request body, and derives ownership from the verified token. Survey fields and supplied ownership fields are rejected.
@@ -33,6 +34,7 @@ npm.cmd run typecheck
 npm.cmd run build
 npm.cmd run test:security
 npm.cmd run tide:doctor -- --check --url http://localhost:3000
+npm.cmd run test:callback
 ```
 
 Security tests launch a separate server on port 3101 with an ephemeral fixture issuer passed only to that child process. They use the same JWT, role, DPoP, API, and PostgreSQL code as the app. They do not change `.env` or the real adapter, and do not add a test login or auth bypass to application code. Generated test signing keys remain in the test process environment. Do not point this suite at a production database.
@@ -46,6 +48,8 @@ The four test groups cover:
 
 Tests use opaque ciphertext fixtures; they **do not prove live Tide encryption or identity isolation in the Fabric**. They create then delete their own records in the local development database; corresponding activity events remain. Run builds and tests sequentially because the production build owns `.next`, including the test build subdirectory.
 
+With the main app running, the callback browser regression simulates silent-SSO failure and a token-endpoint error. It verifies the visible callback error, a single recovery redirect for a remembered tab, no redirect loop after failure, and API denial when only the session hint is present. It issues no real Tide tokens. Real session restoration still needs the browser acceptance check below.
+
 ## Real Tide acceptance check
 
 Use two distinct Tide identities, A and B, in separate browser profiles. A second app principal may need an invite and approval through Tide's realm console because open registration is disabled. Do not reuse identity A for both profiles.
@@ -53,7 +57,7 @@ Use two distinct Tide identities, A and B, in separate browser profiles. A secon
 1. Finish owner enrollment, ensure `data/tidecloak.json` has the real embedded key, and get Tide Doctor to pass against the running app.
 2. Sign in as A at `http://localhost:3000`, open the vault, fill the synthetic example, and save it.
 3. Inspect the upload in browser developer tools: it should contain only the ciphertext envelope, without survey answers. Inspect the database row and verify the answers are absent from its ciphertext/metadata.
-4. Reload the page. The record remains, with answers initially hidden. Open it and verify the original synthetic values reappear. Test Hide answers, automatic hiding, and sign-out.
+4. Reload the page. An active session should restore silently or through one brief Tide redirect, then return to the vault. The record remains, with answers initially hidden. Open it and verify the original synthetic values reappear. Test Hide answers, automatic hiding, and sign-out. After signing out, return to `/vault` and reload: the sign-in gate should remain without automatic recovery.
 5. Sign in as B. A's record must not appear. Request A's record ID with B's **own valid** `secureFetch` context: reads and deletes must return 404. Retain A's ciphertext for the next independent cryptographic check; do not change server ownership.
 6. From a developer-only harness using B's `useTideCloak()` hook context, pass A's retained ciphertext to `doDecrypt([{ encrypted: ciphertext, tags: ["vault"] }])`. This must fail. A successful API denial alone does not prove this cryptographic check.
 7. Return to A, verify the record still opens after B's failed attempts, then delete the synthetic record. The next fetch should return 404.

@@ -8,6 +8,15 @@ function json(body: unknown, status = 200) {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 }
 
+function safeDatabaseErrorCode(error: unknown) {
+  if (error && typeof error === "object") {
+    const code = "code" in error && typeof error.code === "string" ? error.code : undefined;
+    const name = "name" in error && typeof error.name === "string" ? error.name : "UnknownError";
+    return code ? `${name}/${code}` : name;
+  }
+  return "UnknownError";
+}
+
 export const GET = withRole("appUser", async (req, jwt) => {
   const id = new URL(req.url).searchParams.get("id");
   try {
@@ -44,10 +53,16 @@ export const POST = withRole("appUser", async (req, jwt) => {
     const parsed = uploadSchema.safeParse(JSON.parse(new TextDecoder().decode(bytes)));
     if (!parsed.success) return json({ error: "Expected only a ciphertext envelope (maximum 64 KiB)." }, 400);
     try {
-      const record = await createRecord(jwt.sub!, parsed.data.ciphertext);
+      const tideUserKey = typeof jwt.tideuserkey === "string" ? jwt.tideuserkey : "";
+      const record = await createRecord(jwt.sub!, tideUserKey, parsed.data.ciphertext);
       return json({ record }, 201);
-    } catch {
-      return json({ error: "Unable to save the record. Please try again." }, 503);
+    } catch (error) {
+      const diagnostic = safeDatabaseErrorCode(error);
+      console.error(`[vault] createRecord failed: ${diagnostic}`);
+      const message = process.env.NODE_ENV === "development"
+        ? `Unable to save the record (${diagnostic}). Please try again.`
+        : "Unable to save the record. Please try again.";
+      return json({ error: message }, 503);
     }
   } catch {
     return json({ error: "Invalid record payload" }, 400);
