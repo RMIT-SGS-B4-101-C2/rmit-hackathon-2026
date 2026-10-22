@@ -2,6 +2,8 @@ import path from "path";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Keep the integration-test server separate from the developer's running app.
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   // Next.js 16+ defaults to Turbopack. Use `next dev --webpack` (in package.json)
   // because @tidecloak/* packages need the webpack workarounds below.
   webpack: (config) => {

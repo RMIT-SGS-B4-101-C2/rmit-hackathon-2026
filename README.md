@@ -4,12 +4,12 @@ RMIT Hackathon 2026: participants contribute synthetic research records, approve
 
 ## Implementation status
 
-This is the development environment and an owner-only Tide vault starter. The complete research consent portal is still to be built.
+Stage 1 code is implemented: a synthetic survey, browser-side Tide self-encryption, and an owner-only PostgreSQL vault. The complete research consent portal is still to be built. Tide enrollment and realm setup are complete, but live login is blocked by Tide session-token signing errors. See [login diagnostics](docs/TIDE_LOGIN_DIAGNOSTICS.md). Real encrypted save/open and second-identity acceptance checks remain pending.
 
 - Next.js App Router, TypeScript, Tide SDK, server-side JWT verification, and DPoP proofs.
-- `/vault` demonstrates owner-only browser encryption. Its prototype API stores ciphertext in ignored `data/vault/` files. Labels are unencrypted metadata; use non-sensitive labels.
-- PostgreSQL Compose configuration, a Prisma schema, and a lazy PostgreSQL client. The prototype vault API is **not connected to Prisma yet**.
-- Tailwind CSS, shadcn configuration/utilities, Zod, and Playwright dependencies. UI components and browser tests will be added with features.
+- `/vault` collects fictional sleep/study survey responses, encrypts the full response before upload, and opens records through Tide in the browser. Open answers hide within 60 seconds or when the tab is hidden.
+- PostgreSQL persistence, an applied initial Prisma migration, owner-scoped list/read/delete operations, and atomic create/delete activity events. Old `data/vault/` starter files are no longer used or automatically migrated.
+- Responsive participant screens, Zod validation, and four Playwright API security test groups covering authenticated isolation, DPoP binding/replay, and request validation.
 - A setup screen while the real Tide adapter is absent. Protected API requests remain denied; no mock identity is provided.
 
 Researcher sharing, policy signing, consent requests, withdrawal, expiry enforcement, and role dashboards are planned. Self-encrypted prototype entries cannot be made shareable just by changing a database flag.
@@ -18,11 +18,12 @@ Researcher sharing, policy signing, consent requests, withdrawal, expiry enforce
 
 - Installed project-local Node.js 24.22.1, npm dependencies, jq 1.8.2, and Microsoft WSL 3.0.3.
 - Generated random credentials and saved the owner's Tide licence answers in ignored `.env`.
-- Enabled Windows Virtual Machine Platform successfully. **Windows reports a restart is required; no restart was performed.**
-- Docker Desktop's signed installer is cached in `.tools/`. Its first install attempt stopped because the Windows feature was not yet enabled. After restarting, run `scripts/install-docker.ps1` as described below, then open Docker Desktop and review its agreement.
-- PostgreSQL and the Tide realm have not started; no database migration or Tide account linking has occurred.
-- Prisma generation/validation, TypeScript checks, production build, and PowerShell helper syntax checks passed. HTTP checks verified the setup screen, unauthorized API denial (401), and the byte-exact DPoP relay with its required headers. Webpack reported cache warnings but completed the build.
-- Tide Doctor passed 11 code/relay checks and reported the expected missing-adapter failure. Real login, encryption, and sharing remain unverified until Docker/bootstrap completes.
+- Docker Desktop is installed and running after Windows feature setup. PostgreSQL is healthy, and the initial migration has been applied.
+- TideCloak is running with a persistent named volume. Owner enrollment is complete, governance is in Tide mode, and the real adapter was exported to ignored `data/tidecloak.json`.
+- Prisma generation, TypeScript checks, production build, and four API security test groups passed. Fixture tests do not prove live Tide encryption.
+- Tide Doctor passes all 18 code, adapter, served-relay, and realm checks. Desktop/mobile browser rendering and the unauthenticated vault gate were checked without uncaught browser errors. See [Stage 1 verification](docs/STAGE_1.md) for the remaining live encryption checks.
+- Consent Vault login branding is generated, uploaded, signed, and byte-verified. The owner chose no profile fields for Stage 1, so no onboarding form is added. See [branding](branding/README.md) for regeneration instructions.
+- Fixed a callback mismatch: the front-channel provider now owns the token exchange and navigates to the vault only after authentication. A browser regression verifies that a failed token exchange stays visible with retry. Real attempts still fail on Tide's `TidecloakSessionStartTokenSign:1` model; Doctor does not test successful live token issuance.
 
 ## Recommended stack
 
@@ -122,7 +123,7 @@ The bootstrap requires `jq` on PATH; this Windows checkout uses `.tools/bin/jq.e
 npm.cmd run init
 ```
 
-The first-run script checks prerequisites and consent, refuses to overwrite existing setup, and starts `research-consent-tidecloak` on `127.0.0.1:8080` with a persistent named volume. It creates realm `research-consent-vault` and client `research-consent-vault-client`, activates Tide, and configures governed changes.
+The first-run script checks prerequisites and consent, refuses to overwrite an exported adapter or existing realm, and starts `research-consent-tidecloak` on `127.0.0.1:8080` with a persistent named volume. It initializes volume ownership for the image's non-root user. It creates realm `research-consent-vault` and client `research-consent-vault-client`, activates Tide, and configures governed changes. `TIDE_REUSE_CONTAINER=1` is only for retrying a failed container startup **before** realm creation; it still refuses to import over an existing realm.
 
 **Open the printed account-linking URL and complete the browser flow.** At that step, decide whether to brand the login screen and which optional profile fields to collect. Tide MCP provides `tide_branding` and `tide_onboarding`. Do not invent profile names/emails or assume the licence email belongs to every user.
 
@@ -153,6 +154,15 @@ npm.cmd run tide:doctor -- --check --url http://localhost:3000
 
 Doctor must pass with the real adapter and served relay before claiming authentication works. A successful build does not verify login, encryption, sharing, or revocation.
 
+If sign-in shows “Sign-in could not be completed”, consult [the current diagnostic report](docs/TIDE_LOGIN_DIAGNOSTICS.md). From a second shell while the app runs, these checks reproduce the callback failure handling and inspect local realm configuration:
+
+```powershell
+npm.cmd run test:callback
+node scripts/check-tide-setup.mjs
+```
+
+The callback test intercepts the token endpoint with a synthetic failure; it cannot establish a real Tide session. The setup diagnostic performs read-only realm lookups using the local admin credentials in `.env`, printing only checks and counts. Neither check proves live login works.
+
 ## Repository map
 
 | Path | Purpose |
@@ -160,7 +170,10 @@ Doctor must pass with the real adapter and served relay before claiming authenti
 | `.env.example` / `.env` | Variable template / ignored local credentials and licence answers |
 | `compose.yaml` | PostgreSQL and persistent named volume |
 | `prisma/schema.prisma` | Starting studies, ciphertext contributions, grants, and event schema |
-| `src/lib/db.ts` | Lazy Prisma client with PostgreSQL driver adapter |
+| `src/lib/db.ts` / `src/lib/vault-store.ts` | Prisma connection and owner-scoped encrypted-record persistence |
+| `src/lib/survey.ts` | Fixed demo study, synthetic survey schema, ciphertext-envelope validation |
+| `tests/api.security.spec.ts` | Real API/PostgreSQL integration checks with ephemeral fixture credentials |
+| `docs/STAGE_1.md` | Stage 1 acceptance checks and implementation limits |
 | `scripts/setup.ps1` | Repeatable Windows preparation; preserves local config |
 | `scripts/env.ps1` | Local tool PATH for the current development shell |
 | `scripts/init-tidecloak.sh` | First-run Tide bootstrap adapted from the official starter |
@@ -168,6 +181,8 @@ Doctor must pass with the real adapter and served relay before claiming authenti
 | `public/tide_dpop_auth.html` | Byte-exact Tide relay; do not format or add a trailing newline |
 
 `npm.cmd run db:studio` opens Prisma Studio. `docker stop research-consent-tidecloak` stops Tide. Neither deletes persistent data. Supplied ignores cover secrets, generated adapters, vault files, dependencies, tools, and installers.
+
+Run `npm.cmd run test:security` with local PostgreSQL ready. This starts an isolated server on port 3101 and tests real JWT/DPoP verification and database ownership rules. It does not exercise the Tide Fabric or modify the real realm adapter. Run it separately from production builds, since both own subdirectories of `.next`.
 
 ## Recommended build stages
 

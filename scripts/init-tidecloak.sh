@@ -191,12 +191,21 @@ done
 
 # --- Step 1: Refuse to overwrite an existing installation ---
 CONTAINER_NAME="research-consent-tidecloak"
-if [ -f "$PROJECT_DIR/data/tidecloak.json" ] || docker container inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+if [ -f "$PROJECT_DIR/data/tidecloak.json" ]; then
   echo "ERROR: Existing Tide setup found. Bootstrap is first-run only; it will not delete a realm."
   echo "Start the existing container with: docker start $CONTAINER_NAME"
   exit 1
 fi
 mkdir -p "$PROJECT_DIR/data"
+REUSE_CONTAINER=0
+if docker container inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+  if [ "${TIDE_REUSE_CONTAINER:-0}" != "1" ]; then
+    echo "ERROR: Existing container found. Start it normally if already bootstrapped."
+    echo "For a failed startup before realm creation only, retry with TIDE_REUSE_CONTAINER=1."
+    exit 1
+  fi
+  REUSE_CONTAINER=1
+fi
 
 if lsof -i :8080 >/dev/null 2>&1; then
   echo "ERROR: Port 8080 is already in use."
@@ -204,6 +213,9 @@ if lsof -i :8080 >/dev/null 2>&1; then
 fi
 
 # --- Step 2: Start container ---
+if [ "$REUSE_CONTAINER" = "1" ]; then
+  docker start "$CONTAINER_NAME"
+else
 echo "==> Starting TideCloak ($TIDECLOAK_IMAGE)..."
 
 # tideorg/tidecloak-dev is a development build of the server wired to the PRODUCTION Tide
@@ -217,23 +229,28 @@ case "$TIDECLOAK_IMAGE" in
          exit 1 ;;
 esac
 
-docker run -d --name "$CONTAINER_NAME" \
+# A freshly created named volume belongs to root; initialize its directory for UID 1000.
+MSYS_NO_PATHCONV=1 docker run --rm --user 0 --entrypoint /bin/sh \
+  --mount type=volume,src=research-consent-tidecloak-data,dst=/state \
+  "$TIDECLOAK_IMAGE" -c 'chown 1000:0 /state'
+MSYS_NO_PATHCONV=1 docker run -d --name "$CONTAINER_NAME" \
   -v research-consent-tidecloak-data:/opt/keycloak/data/h2 \
   -p 127.0.0.1:8080:8080 \
   -e KC_BOOTSTRAP_ADMIN_USERNAME="$KC_BOOTSTRAP_ADMIN_USERNAME" \
   -e KC_BOOTSTRAP_ADMIN_PASSWORD="$KC_BOOTSTRAP_ADMIN_PASSWORD" \
   "$TIDECLOAK_IMAGE"
+fi
 
 # --- Step 3: Wait for readiness ---
 echo "==> Waiting for TideCloak to start..."
-for i in {1..24}; do
+for i in {1..60}; do
   curl -sf "$TIDECLOAK_URL" > /dev/null 2>&1 && break
-  echo "  Attempt $i/24..."
+  echo "  Attempt $i/60..."
   sleep 5
 done
 
 if ! curl -sf "$TIDECLOAK_URL" > /dev/null 2>&1; then
-  echo "ERROR: TideCloak did not start within 120 seconds. Run: docker logs $CONTAINER_NAME"
+  echo "ERROR: TideCloak did not start within 300 seconds. Run: docker logs $CONTAINER_NAME"
   exit 1
 fi
 echo "  TideCloak is ready."
@@ -256,6 +273,11 @@ sed -i "s|CLIENT_NAME|$CLIENT_NAME|g" "$TMP_REALM"
 sed -i "s|CLIENT_APP_URL|$CLIENT_APP_URL|g" "$TMP_REALM"
 
 TOKEN="$(get_token)"
+EXISTING_REALM_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$TIDECLOAK_URL/admin/realms/$REALM_NAME" -H "Authorization: Bearer $TOKEN")
+if [ "$EXISTING_REALM_CODE" != "404" ]; then
+  echo "ERROR: Realm import stopped (lookup HTTP $EXISTING_REALM_CODE). Refusing to overwrite an existing realm."
+  exit 1
+fi
 curl -s -X POST "$TIDECLOAK_URL/admin/realms" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \

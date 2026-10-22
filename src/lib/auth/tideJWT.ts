@@ -26,7 +26,10 @@ export async function verifyTideJWT(token: string): Promise<JWTPayload> {
   const { config, JWKS } = getConfig();
   const { payload } = await jwtVerify(token, JWKS, {
     issuer: `${config["auth-server-url"].replace(/\/+$/, "")}/realms/${config.realm}`,
+    requiredClaims: ["sub", "exp", "iat"],
   });
+
+  if (typeof payload.sub !== "string" || !payload.sub.trim()) throw new Error("Token subject missing");
 
   if (payload.azp !== config.resource) {
     throw new Error("Token azp does not match client");

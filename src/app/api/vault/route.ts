@@ -1,89 +1,67 @@
-import { NextRequest } from "next/server";
-import { withAuth } from "@/lib/auth/middleware";
-import { randomUUID } from "crypto";
-import { readFileSync, writeFileSync, mkdirSync } from "fs";
-import { join } from "path";
+import { withRole } from "@/lib/auth/middleware";
+import { createRecord, deleteRecord, findRecord, listRecords } from "@/lib/vault-store";
+import { recordIdSchema, uploadSchema } from "@/lib/survey";
 
-// Filesystem store for vault entries. Survives Next.js dev hot reload.
-// In-memory stores (Map, Array) reset on every file change in dev mode.
-// For production, replace with a real database.
-const DATA_DIR = join(process.cwd(), "data", "vault");
-mkdirSync(DATA_DIR, { recursive: true });
+export const runtime = "nodejs";
 
-interface VaultEntry {
-  id: string;
-  label: string;
-  ciphertext: string;
-  createdAt: string;
+function json(body: unknown, status = 200) {
+  return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 }
 
-function readEntries(userId: string): VaultEntry[] {
+export const GET = withRole("appUser", async (req, jwt) => {
+  const id = new URL(req.url).searchParams.get("id");
   try {
-    const filePath = join(DATA_DIR, `${userId}.json`);
-    return JSON.parse(readFileSync(filePath, "utf-8"));
+    if (id !== null) {
+      if (!recordIdSchema.safeParse(id).success) return json({ error: "Invalid record ID" }, 400);
+      const record = await findRecord(jwt.sub!, id);
+      // Same answer for absent and foreign records, including administrator callers.
+      return record ? json({ record }) : json({ error: "Record not found" }, 404);
+    }
+    return json({ records: await listRecords(jwt.sub!) });
   } catch {
-    return [];
+    return json({ error: "Records are unavailable. Please try again." }, 503);
   }
-}
-
-function writeEntries(userId: string, entries: VaultEntry[]): void {
-  const filePath = join(DATA_DIR, `${userId}.json`);
-  writeFileSync(filePath, JSON.stringify(entries, null, 2));
-}
-
-// GET /api/vault — list all vault entries for the authenticated user (ciphertext only)
-export const GET = withAuth(async (_req, jwt) => {
-  const userId = jwt.sub!;
-  const entries = readEntries(userId);
-  return Response.json({ entries });
 });
 
-// POST /api/vault — store a new encrypted entry
-// Body: { label: string, ciphertext: string }
-// The server never sees plaintext. Encryption happens client-side via Tide SDK.
-export const POST = withAuth(async (req, jwt) => {
-  const userId = jwt.sub!;
-  const body = await req.json();
-
-  const { label, ciphertext } = body;
-  if (!label || typeof label !== "string" || label.length > 200) {
-    return Response.json({ error: "Invalid label" }, { status: 400 });
+export const POST = withRole("appUser", async (req, jwt) => {
+  if (Number(req.headers.get("content-length")) > 70 * 1024) return json({ error: "Record too large" }, 413);
+  // Bound the stream before parsing, even for chunked requests without Content-Length.
+  const reader = req.body?.getReader();
+  if (!reader) return json({ error: "Expected an encrypted record" }, 400);
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 70 * 1024) { await reader.cancel(); return json({ error: "Record too large" }, 413); }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    const parsed = uploadSchema.safeParse(JSON.parse(new TextDecoder().decode(bytes)));
+    if (!parsed.success) return json({ error: "Expected only a ciphertext envelope (maximum 64 KiB)." }, 400);
+    try {
+      const record = await createRecord(jwt.sub!, parsed.data.ciphertext);
+      return json({ record }, 201);
+    } catch {
+      return json({ error: "Unable to save the record. Please try again." }, 503);
+    }
+  } catch {
+    return json({ error: "Invalid record payload" }, 400);
+  } finally {
+    reader.releaseLock();
   }
-  if (!ciphertext || typeof ciphertext !== "string") {
-    return Response.json({ error: "Missing ciphertext" }, { status: 400 });
-  }
-
-  const entry: VaultEntry = {
-    id: randomUUID(),
-    label,
-    ciphertext,
-    createdAt: new Date().toISOString(),
-  };
-
-  const entries = readEntries(userId);
-  entries.push(entry);
-  writeEntries(userId, entries);
-
-  return Response.json({ entry }, { status: 201 });
 });
 
-// DELETE /api/vault?id=<entryId> — delete a vault entry
-export const DELETE = withAuth(async (req, jwt) => {
-  const userId = jwt.sub!;
-  const url = new URL(req.url);
-  const entryId = url.searchParams.get("id");
-
-  if (!entryId) {
-    return Response.json({ error: "Missing id parameter" }, { status: 400 });
+export const DELETE = withRole("appUser", async (req, jwt) => {
+  const id = new URL(req.url).searchParams.get("id");
+  if (!recordIdSchema.safeParse(id).success) return json({ error: "Invalid record ID" }, 400);
+  try {
+    return await deleteRecord(jwt.sub!, id!) ? json({ deleted: true }) : json({ error: "Record not found" }, 404);
+  } catch {
+    return json({ error: "Unable to delete the record. Please try again." }, 503);
   }
-
-  const entries = readEntries(userId);
-  const idx = entries.findIndex((e) => e.id === entryId);
-  if (idx === -1) {
-    return Response.json({ error: "Entry not found" }, { status: 404 });
-  }
-
-  entries.splice(idx, 1);
-  writeEntries(userId, entries);
-  return Response.json({ success: true });
 });

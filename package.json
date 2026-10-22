@@ -15,7 +15,10 @@
         "db:studio": "prisma studio",
         "services:up": "docker compose up -d postgres",
         "services:down": "docker compose down",
-        "postinstall": "prisma generate"
+        "postinstall": "prisma generate",
+        "test:security": "playwright test",
+        "test:security:ui": "playwright test --ui",
+        "test:callback": "node scripts/check-login-callback.mjs"
     },
     "dependencies": {
         "@prisma/adapter-pg": "7.10.1",

@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { verifyTideJWT, hasRole, extractToken } from "./tideJWT";
+import { verifyTideJWT, extractToken } from "./tideJWT";
 import { verifyDpop } from "./verifyDpop";
 import type { JWTPayload } from "jose";
 
@@ -14,12 +14,12 @@ export function withAuth(handler: AuthHandler) {
       // and without checking the DPoP proof a stolen token replays as a plain `Bearer` and passes
       // (AP-43). verifyDpop rejects an unbound token, a Bearer-scheme replay, a proof signed by a
       // different key, and a proof for another URL or method. It throws; the catch below answers 401.
-      await verifyDpop(req, token, jwt as { cnf?: { jkt?: string } });
+      await verifyDpop(req, token, jwt as { cnf?: { jkt?: string } }, { trustForwardedHeaders: false });
       return handler(req, jwt);
-    } catch (err) {
+    } catch {
       return Response.json(
-        { error: err instanceof Error ? err.message : "Unauthorized" },
-        { status: 401 }
+        { error: "Authentication required. Please sign in again." },
+        { status: 401, headers: { "Cache-Control": "no-store" } }
       );
     }
   };
@@ -27,8 +27,8 @@ export function withAuth(handler: AuthHandler) {
 
 export function withRole(role: string, handler: AuthHandler) {
   return withAuth(async (req, jwt) => {
-    if (!hasRole(jwt, role)) {
-      return Response.json({ error: "Forbidden" }, { status: 403 });
+    if (!((jwt.realm_access as { roles?: string[] })?.roles ?? []).includes(role)) {
+      return Response.json({ error: "Forbidden" }, { status: 403, headers: { "Cache-Control": "no-store" } });
     }
     return handler(req, jwt);
   });

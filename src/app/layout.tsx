@@ -21,13 +21,13 @@ export default function RootLayout({
   const config = configured ? loadTideConfig() : null;
   return (
     <html lang="en">
-      <body style={{ fontFamily: "system-ui, sans-serif", margin: 0, padding: "2rem", background: "#0a0a0a", color: "#ededed" }}>
+      <body>
         {config ? <Providers config={config as unknown as Record<string, unknown>}>{children}</Providers> : (
-          <main style={{ maxWidth: 720, margin: "4rem auto", lineHeight: 1.7 }}>
-            <h1>Research Consent Vault</h1>
+          <main className="shell sign-in">
+            <span className="eyebrow">RESEARCH CONSENT VAULT</span><h1>Your private vault is almost ready.</h1>
             <p>The development app is ready. TideCloak account setup is still required.</p>
             <p>Follow the local setup instructions in README.md, then restart the app after exporting data/tidecloak.json.</p>
-            <p>Login and the vault remain unavailable until a real Tide adapter is configured.</p>
+            <p className="quiet">Login and the vault remain unavailable until a real Tide adapter is configured.</p>
           </main>
         )}
       </body>

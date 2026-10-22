@@ -4,6 +4,7 @@ node_modules/
 .npm-cache/
 .npm-logs/
 .next/
+.next-test/
 out/
 build/
 

@@ -1,285 +1,156 @@
 "use client";
 
+import Link from "next/link";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useTideCloak } from "@tidecloak/nextjs";
-import { useState, useEffect, useCallback } from "react";
+import { ArrowLeft, Check, Eye, EyeOff, Fingerprint, FlaskConical, LockKeyhole, Plus, Trash2 } from "lucide-react";
+import { ENCRYPTION_TAG, STUDY, SYNTHETIC_SURVEY, surveySchema, type EncryptedRecord, type Survey } from "@/lib/survey";
 
-interface VaultEntry {
-  id: string;
-  label: string;
-  ciphertext: string;
-  createdAt: string;
-}
+const absolute = (path: string) => new URL(path, window.location.origin).href;
 
 export default function VaultPage() {
-  const { authenticated, login, logout, getValueFromIdToken, secureFetch, doEncrypt, doDecrypt, isInitializing } =
-    useTideCloak();
-
-  const [entries, setEntries] = useState<VaultEntry[]>([]);
-  const [label, setLabel] = useState("");
-  const [secret, setSecret] = useState("");
-  const [decrypted, setDecrypted] = useState<Record<string, string>>({});
-  const [status, setStatus] = useState("");
+  const { authenticated, isInitializing, login, logout, doEncrypt, doDecrypt, secureFetch, getValueFromToken } = useTideCloak();
+  const [leaving, setLeaving] = useState(false);
+  const subject = authenticated && !leaving ? String(getValueFromToken("sub") ?? "") : "";
+  const identity = useRef(subject);
+  identity.current = subject;
+  const fetchRef = useRef(secureFetch);
+  fetchRef.current = secureFetch;
+  const [records, setRecords] = useState<EncryptedRecord[]>([]);
+  const [form, setForm] = useState<Survey>({ ...SYNTHETIC_SURVEY, notes: "" });
+  const [opened, setOpened] = useState<Record<string, Survey>>({});
+  const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState("");
+  const [error, setError] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const hasOpened = Object.keys(opened).length > 0;
 
-  const TAG = "vault";
-
-  const fetchEntries = useCallback(async () => {
-    if (!authenticated) return;
+  const refresh = useCallback(async () => {
+    if (!subject) return;
+    setLoading(true);
     try {
-      const res = await secureFetch(new URL("/api/vault", window.location.origin).href);
-      if (res.ok) {
-        const data = await res.json();
-        setEntries(data.entries);
-      }
-    } catch {
-      setStatus("Failed to load vault entries.");
-    }
-  }, [authenticated, secureFetch]);
+      const response = await fetchRef.current(absolute("/api/vault"), { cache: "no-store" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Unable to load records.");
+      if (identity.current === subject) setRecords(body.records);
+    } catch (err) {
+      if (identity.current === subject) setError(err instanceof Error ? err.message : "Unable to load records.");
+    } finally { if (identity.current === subject) setLoading(false); }
+  }, [subject]);
 
+  useEffect(() => { setRecords([]); setOpened({}); setError(""); setStatus(""); setBusy(false); setPendingDelete(null); setForm({ ...SYNTHETIC_SURVEY, notes: "" }); void refresh(); }, [refresh]);
+  // Limit how long decrypted answers remain visible. Nothing is written to browser storage.
   useEffect(() => {
-    if (authenticated) {
-      fetchEntries();
-    }
-  }, [authenticated, fetchEntries]);
+    if (!hasOpened) return;
+    const timer = window.setTimeout(() => setOpened({}), 60_000);
+    const hide = () => { if (document.hidden) setOpened({}); };
+    document.addEventListener("visibilitychange", hide);
+    return () => { clearTimeout(timer); document.removeEventListener("visibilitychange", hide); };
+  }, [hasOpened]);
 
-  if (isInitializing) {
-    return <p>Loading...</p>;
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    const parsed = surveySchema.safeParse(form);
+    if (!parsed.success) { setError(parsed.error.issues[0]?.message || "Check your survey answers."); return; }
+    const current = subject;
+    setBusy(true); setError(""); setStatus("Encrypting your fictional answers with Tide…");
+    try {
+      const result = await doEncrypt([{ data: JSON.stringify(parsed.data), tags: [ENCRYPTION_TAG] }]);
+      if (identity.current !== current) return;
+      if (typeof result?.[0] !== "string") throw new Error("Tide did not return a valid encrypted record.");
+      setStatus("Saving the encrypted record…");
+      const response = await secureFetch(absolute("/api/vault"), {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ciphertext: result[0] }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Unable to save your record.");
+      if (identity.current !== current) return;
+      setForm({ ...SYNTHETIC_SURVEY, notes: "" });
+      setStatus("Encrypted record saved. Only your account can open it.");
+      await refresh();
+    } catch (err) {
+      if (identity.current === current) { setStatus(""); setError(err instanceof Error ? err.message : "Encryption failed. No plaintext was uploaded."); }
+    } finally { if (identity.current === current) setBusy(false); }
   }
 
-  if (!authenticated) {
-    return (
-      <div style={{ maxWidth: 480, margin: "4rem auto", textAlign: "center" }}>
-        <p>You must be logged in to access the vault.</p>
-        <button onClick={login} style={btnPrimary}>
-          Login with Tide
-        </button>
-      </div>
-    );
-  }
-
-  const handleEncryptAndStore = async () => {
-    if (!label.trim() || !secret.trim()) {
-      setStatus("Label and secret are required.");
-      return;
-    }
-
-    setLoading(true);
-    setStatus("Encrypting via Tide Fabric...");
-
+  async function open(record: EncryptedRecord) {
+    const current = subject;
+    setBusy(true); setError(""); setStatus("Opening your record with Tide…");
     try {
-      // Self-encryption: only this user can ever decrypt
-      const result = await doEncrypt([{ data: secret, tags: [TAG] }]);
-      const ciphertext = result[0];
-
-      setStatus("Storing encrypted entry...");
-      const res = await secureFetch(new URL("/api/vault", window.location.origin).href, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ label: label.trim(), ciphertext }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        setStatus(`Store failed: ${err.error}`);
-        return;
-      }
-
-      setLabel("");
-      setSecret("");
-      setStatus("Encrypted and stored.");
-      await fetchEntries();
-    } catch (err: any) {
-      setStatus(`Encrypt failed: ${err.message || err}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDecrypt = async (entry: VaultEntry) => {
-    setLoading(true);
-    setStatus(`Decrypting "${entry.label}" via Tide Fabric...`);
-
-    try {
-      // Self-decryption: only the user who encrypted can decrypt
-      const result = await doDecrypt([
-        { encrypted: entry.ciphertext, tags: [TAG] },
-      ]);
-      const plaintext = result[0];
-
-      setDecrypted((prev) => ({ ...prev, [entry.id]: plaintext }));
-      setStatus("Decrypted.");
-    } catch (err: any) {
-      setStatus(`Decrypt failed: ${err.message || err}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    try {
-      const res = await secureFetch(new URL(`/api/vault?id=${encodeURIComponent(id)}`, window.location.origin).href, {
-        method: "DELETE",
-      });
-      if (res.ok) {
-        setDecrypted((prev) => {
-          const copy = { ...prev };
-          delete copy[id];
-          return copy;
-        });
-        await fetchEntries();
-        setStatus("Entry deleted.");
-      }
+      // Recheck ownership server-side on every open before asking Tide to decrypt.
+      const response = await secureFetch(absolute(`/api/vault?id=${record.id}`), { cache: "no-store" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Record unavailable.");
+      const result = await doDecrypt([{ encrypted: body.record.ciphertext, tags: [ENCRYPTION_TAG] }]);
+      const plaintext = typeof result?.[0] === "string" ? result[0] : new TextDecoder().decode(result[0]);
+      const survey = surveySchema.parse(JSON.parse(plaintext));
+      if (identity.current === current) { setOpened((items) => ({ ...items, [record.id]: survey })); setStatus("Record opened. Answers hide after 60 seconds or when you leave this tab."); }
     } catch {
-      setStatus("Delete failed.");
-    }
-  };
+      if (identity.current === current) { setStatus(""); setError("This record could not be opened. Check your Tide session and try again."); }
+    } finally { if (identity.current === current) setBusy(false); }
+  }
 
-  return (
-    <div style={{ maxWidth: 600, margin: "2rem auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
-        <h1 style={{ margin: 0 }}>Vault</h1>
-        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-          <span style={{ color: "#999", fontSize: "0.9rem" }}>{getValueFromIdToken("preferred_username")}</span>
-          <a href="/" style={{ ...btnSmall, background: "#333", textDecoration: "none" }}>Home</a>
-          <button onClick={logout} style={{ ...btnSmall, background: "#333" }}>Logout</button>
-        </div>
-      </div>
+  async function remove(id: string) {
+    const current = subject;
+    setBusy(true); setError("");
+    try {
+      const response = await secureFetch(absolute(`/api/vault?id=${id}`), { method: "DELETE" });
+      if (!response.ok) throw new Error("Unable to delete the record.");
+      if (identity.current !== current) return;
+      setOpened((items) => { const copy = { ...items }; delete copy[id]; return copy; });
+      setPendingDelete(null); setStatus("Record deleted from your vault."); await refresh();
+    } catch (err) { if (identity.current === current) setError(err instanceof Error ? err.message : "Unable to delete the record."); }
+    finally { if (identity.current === current) setBusy(false); }
+  }
 
-      {/* Encrypt new secret */}
-      <div style={cardStyle}>
-        <h2 style={{ marginTop: 0 }}>Encrypt a Secret</h2>
-        <input
-          type="text"
-          placeholder="Label (e.g. API Key)"
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          style={inputStyle}
-        />
-        <textarea
-          placeholder="Secret data to encrypt..."
-          value={secret}
-          onChange={(e) => setSecret(e.target.value)}
-          rows={3}
-          style={{ ...inputStyle, resize: "vertical" }}
-        />
-        <button
-          onClick={handleEncryptAndStore}
-          disabled={loading}
-          style={btnPrimary}
-        >
-          {loading ? "Working..." : "Encrypt & Store"}
-        </button>
-      </div>
+  async function signOut() {
+    setLeaving(true); setOpened({}); setForm({ ...SYNTHETIC_SURVEY, notes: "" });
+    try { await logout(); }
+    catch { setError("Sign-out could not finish. Please try again."); }
+    finally { setLeaving(false); }
+  }
 
-      {/* Status */}
-      {status && (
-        <p style={{ color: "#60a5fa", fontSize: "0.9rem", margin: "1rem 0" }}>
-          {status}
-        </p>
-      )}
+  if (leaving) return <main className="shell"><p role="status">Signing out of your vault…</p></main>;
+  if (isInitializing) return <main className="shell"><p role="status">Connecting to your Tide identity…</p></main>;
+  if (!authenticated) return <main className="shell sign-in"><span className="brand-icon"><Fingerprint /></span><h1>Your private research vault</h1><p>Sign in with TideCloak to create and open your encrypted contributions.</p><button className="button primary" onClick={() => void login()}>Sign in with TideCloak</button><Link href="/" className="text-link">Back to home</Link></main>;
 
-      {/* Vault entries */}
-      <h2>Stored Secrets ({entries.length})</h2>
-      {entries.length === 0 && (
-        <p style={{ color: "#666" }}>No secrets stored yet. Encrypt one above.</p>
-      )}
-      {entries.map((entry) => (
-        <div key={entry.id} style={cardStyle}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <strong>{entry.label}</strong>
-            <span style={{ color: "#666", fontSize: "0.8rem" }}>
-              {new Date(entry.createdAt).toLocaleString()}
-            </span>
-          </div>
-
-          <div style={{ marginTop: "0.5rem", fontSize: "0.85rem", wordBreak: "break-all" }}>
-            {decrypted[entry.id] ? (
-              <div style={{ background: "#1a3a1a", padding: "0.75rem", borderRadius: 4 }}>
-                <div style={{ color: "#4ade80", marginBottom: "0.25rem" }}>Decrypted:</div>
-                <div>{decrypted[entry.id]}</div>
-              </div>
-            ) : (
-              <div style={{ background: "#1a1a2e", padding: "0.75rem", borderRadius: 4, color: "#666" }}>
-                {entry.ciphertext.substring(0, 80)}...
-              </div>
-            )}
-          </div>
-
-          <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.5rem" }}>
-            {!decrypted[entry.id] && (
-              <button
-                onClick={() => handleDecrypt(entry)}
-                disabled={loading}
-                style={btnPrimary}
-              >
-                Decrypt
-              </button>
-            )}
-            {decrypted[entry.id] && (
-              <button
-                onClick={() =>
-                  setDecrypted((prev) => {
-                    const copy = { ...prev };
-                    delete copy[entry.id];
-                    return copy;
-                  })
-                }
-                style={{ ...btnSmall, background: "#555" }}
-              >
-                Hide
-              </button>
-            )}
-            <button
-              onClick={() => handleDelete(entry.id)}
-              style={{ ...btnSmall, background: "#7f1d1d" }}
-            >
-              Delete
-            </button>
-          </div>
-        </div>
-      ))}
+  return <main className="shell">
+    <header className="topbar"><Link className="brand" href="/"><span className="brand-icon"><Fingerprint size={23} /></span>Consent Vault</Link><button className="button secondary small" onClick={() => void signOut()}>Sign out</button></header>
+    <div className="page-heading"><Link className="text-link" href="/"><ArrowLeft size={14} /> Home</Link><span className="badge"><LockKeyhole size={13} /> Private to your account</span></div>
+    <h1 className="page-title">My research vault<span className="accent">.</span></h1>
+    <p className="lead compact">Start with a fictional contribution. Your answers stay encrypted until you choose to open them.</p>
+    <div className="notice"><FlaskConical size={19} /><div><strong>Demo study · {STUDY.title}</strong><p>Use made-up answers only. Researcher sharing and consent controls arrive in the next stage.</p></div></div>
+    <div className="vault-grid">
+      <section className="panel survey-panel">
+        <div className="section-title"><span className="number">01</span><h2>New contribution</h2></div>
+        <p>These answers are encrypted together before upload.</p>
+        <form onSubmit={(event) => void save(event)}>
+          <fieldset disabled={busy}>
+            <label htmlFor="sleep">Sleep per night <span>hours</span></label><input id="sleep" type="number" min="0" max="24" step="0.5" required value={form.sleepHours} onChange={(e) => setForm({ ...form, sleepHours: e.target.valueAsNumber })} />
+            <label htmlFor="study">Study per day <span>hours</span></label><input id="study" type="number" min="0" max="24" step="0.5" required value={form.studyHours} onChange={(e) => setForm({ ...form, studyHours: e.target.valueAsNumber })} />
+            <label htmlFor="wellbeing">How does the fictional participant feel?</label><select id="wellbeing" value={form.wellbeing} onChange={(e) => setForm({ ...form, wellbeing: e.target.value as Survey["wellbeing"] })}><option value="low">Low</option><option value="fair">Fair</option><option value="good">Good</option><option value="great">Great</option></select>
+            <label htmlFor="notes">Fictional notes <span>optional</span></label><textarea id="notes" rows={3} maxLength={500} value={form.notes} placeholder="A made-up observation…" onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+            <button type="button" className="text-link sample" onClick={() => setForm({ ...SYNTHETIC_SURVEY })}><Plus size={14} /> Fill a synthetic example</button>
+            <button type="submit" className="button primary wide"><LockKeyhole size={16} />{busy ? "Working…" : "Encrypt & save contribution"}</button>
+          </fieldset>
+        </form>
+      </section>
+      <section className="records-panel" aria-label="My encrypted contributions">
+        <div className="section-title"><span className="number">02</span><h2>My contributions</h2><span className="count">{records.length}</span></div>
+        <p className="quiet">Latest 100 records · visible only to your account</p>
+        {loading && <p role="status">Loading encrypted records…</p>}
+        {!loading && !records.length && <div className="empty-state"><LockKeyhole size={30} /><h3>Your vault starts here</h3><p>Save your first synthetic contribution.<br />Your survey answers will remain encrypted.</p></div>}
+        {records.map((record) => <article className="panel record" key={record.id}>
+          <div className="record-top"><span className="badge"><Check size={12} /> Encrypted</span><time dateTime={record.createdAt}>{new Date(record.createdAt).toLocaleDateString()}</time></div>
+          <h3>{STUDY.title}</h3><p className="record-id">Record {record.id.slice(0, 8)}</p>
+          {opened[record.id] ? <div className="answers"><dl><div><dt>Sleep / night</dt><dd>{opened[record.id].sleepHours} hours</dd></div><div><dt>Study / day</dt><dd>{opened[record.id].studyHours} hours</dd></div><div><dt>Wellbeing</dt><dd>{opened[record.id].wellbeing}</dd></div></dl>{opened[record.id].notes && <p>{opened[record.id].notes}</p>}</div> : <div className="sealed"><LockKeyhole size={15} /><span>Survey answers are encrypted</span></div>}
+          <div className="record-actions">{opened[record.id] ? <button className="button secondary small" onClick={() => setOpened((items) => { const copy = { ...items }; delete copy[record.id]; return copy; })}><EyeOff size={14} /> Hide answers</button> : <button className="button secondary small" disabled={busy} onClick={() => void open(record)}><Eye size={14} /> Open record</button>}<button className="icon-button" disabled={busy} aria-label={`Delete record ${record.id.slice(0, 8)}`} onClick={() => setPendingDelete(record.id)}><Trash2 size={16} /></button></div>
+          {pendingDelete === record.id && <div className="delete-confirm"><p>Delete this encrypted contribution from your vault?</p><button className="button danger small" disabled={busy} onClick={() => void remove(record.id)}>Delete contribution</button><button className="button secondary small" disabled={busy} onClick={() => setPendingDelete(null)}>Keep it</button></div>}
+        </article>)}
+      </section>
     </div>
-  );
+    {status && <p className="notice" role="status">{status}</p>}{error && <p className="notice error" role="alert">{error} <button className="text-link" onClick={() => { setError(""); void refresh(); }}>Retry loading</button></p>}
+    <footer className="footer">Your answers are encrypted with TideCloak.<span>Stage 1 · Private contributions</span></footer>
+  </main>;
 }
-
-const btnPrimary: React.CSSProperties = {
-  background: "#2563eb",
-  color: "#fff",
-  border: "none",
-  borderRadius: 6,
-  padding: "0.6rem 1.2rem",
-  fontSize: "0.95rem",
-  cursor: "pointer",
-};
-
-const btnSmall: React.CSSProperties = {
-  background: "#2563eb",
-  color: "#fff",
-  border: "none",
-  borderRadius: 4,
-  padding: "0.4rem 0.8rem",
-  fontSize: "0.85rem",
-  cursor: "pointer",
-};
-
-const cardStyle: React.CSSProperties = {
-  background: "#111",
-  border: "1px solid #333",
-  borderRadius: 8,
-  padding: "1.25rem",
-  marginBottom: "1rem",
-};
-
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "0.6rem",
-  marginBottom: "0.75rem",
-  background: "#1a1a1a",
-  border: "1px solid #333",
-  borderRadius: 4,
-  color: "#ededed",
-  fontSize: "0.95rem",
-  boxSizing: "border-box",
-};
